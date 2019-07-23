@@ -28,7 +28,7 @@ void swInit()
 {
 	GPIO_InitTypeDef GPIOInitStruct;
 
-	utilSetClockGPIO(SW1_4_PORT,ENABLE);
+	/*utilSetClockGPIO(SW1_4_PORT,ENABLE);
 	utilSetClockGPIO(SW5_7_PORT,ENABLE);
 	utilSetClockGPIO(SW8_PORT,ENABLE);
 
@@ -41,7 +41,17 @@ void swInit()
 	GPIO_Init(SW5_7_PORT,&GPIOInitStruct);
 
 	GPIOInitStruct.GPIO_Pin =  (1<<SW8_PIN);
-	GPIO_Init(SW8_PORT,&GPIOInitStruct);
+	GPIO_Init(SW8_PORT,&GPIOInitStruct);*/
+
+	utilSetClockGPIO(SW1_PORT,ENABLE);
+	utilSetClockGPIO(SW2_PORT,ENABLE);
+
+	GPIOInitStruct.GPIO_Mode = GPIO_Mode_IPU;
+	GPIOInitStruct.GPIO_Speed = GPIO_Speed_2MHz;
+	GPIOInitStruct.GPIO_Pin =  (1<<SW1_PIN);
+	GPIO_Init(SW1_PORT,&GPIOInitStruct);
+	GPIOInitStruct.GPIO_Pin =  (1<<SW2_PIN);
+	GPIO_Init(SW2_PORT,&GPIOInitStruct);
 }
 
 /*

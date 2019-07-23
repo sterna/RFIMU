@@ -35,7 +35,7 @@ void adcInit()
 	utilSetClockADC(ADC1,ENABLE);
 
 	// Setup GPIO
-	GPIO_InitStruct.GPIO_Pin 	= _BV(BAT1_ADC_PIN) || _BV(BAT2_ADC_PIN) || _BV(BAT3_ADC_PIN);
+	GPIO_InitStruct.GPIO_Pin 	= _BV(BAT1_ADC_PIN);// || _BV(BAT2_ADC_PIN) || _BV(BAT3_ADC_PIN);
 	GPIO_InitStruct.GPIO_Speed = GPIO_Speed_2MHz;
 	GPIO_InitStruct.GPIO_Mode 	= GPIO_Mode_AIN;
 	GPIO_Init(BAT1_ADC_PORT, &GPIO_InitStruct);
@@ -71,8 +71,6 @@ void adcInit()
 	//ADC_TempSensorVrefintCmd(ENABLE);
 	// ADC1 regular channels configuration
 	ADC_RegularChannelConfig(ADC1, BAT1_ADC_CHAN, BAT1_INDEX_NUM+1, ADC_SampleTime_239Cycles5);
-	ADC_RegularChannelConfig(ADC1, BAT2_ADC_CHAN, BAT2_INDEX_NUM+1, ADC_SampleTime_239Cycles5);
-	ADC_RegularChannelConfig(ADC1, BAT3_ADC_CHAN, BAT3_INDEX_NUM+1, ADC_SampleTime_239Cycles5);
 
 	// Configure and enable ADC interrupt
 	NVIC_InitStructure.NVIC_IRQChannel 						= ADC1_2_IRQn;

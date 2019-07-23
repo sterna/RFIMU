@@ -15,20 +15,10 @@
 #include "utils.h"
 
 
-#define BAT1_ADC_CHAN		0
-#define BAT1_ADC_PIN		0
-#define BAT1_ADC_PORT		GPIOA
+#define BAT1_ADC_CHAN		9
+#define BAT1_ADC_PIN		1
+#define BAT1_ADC_PORT		GPIOB
 #define BAT1_INDEX_NUM		0
-
-#define BAT2_ADC_CHAN		1
-#define BAT2_ADC_PIN		1
-#define BAT2_ADC_PORT		GPIOA
-#define BAT2_INDEX_NUM		1
-
-#define BAT3_ADC_CHAN		5
-#define BAT3_ADC_PIN		5
-#define BAT3_ADC_PORT		GPIOA
-#define BAT3_INDEX_NUM		2
 
 #define ADC1_DR_Address    	((uint32_t)ADC1_BASE+0x4C)
 #define MILLIVOLT_PER_BIT	3300/4096
@@ -40,7 +30,7 @@
 #define BAT_VOLT_DIV_RATIO_INV	(BAT_VOLT_DIV_R1+BAT_VOLT_DIV_R2))/BAT_VOLT_DIV_R2
 
 //The number of channels used for the ADC
-#define ADC_NOF_CHANNELS 3
+#define ADC_NOF_CHANNELS 1
 //The number of samples for the filtered ADC value
 #define ADC_FILTER_SIZE 8
 

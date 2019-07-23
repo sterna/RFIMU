@@ -17,6 +17,7 @@
 #include "mpu6050.h"
 #include "extFetCtrl.h"
 #include "onboardLedCtrl.h"
+#include "adc.h"
 
 bool poorMansOS();
 void poorMansOSRunAll();
@@ -145,6 +146,7 @@ typedef enum
 	SMODE_RED_FADE_NO_PULSE,
 	SMODE_RANDOM,
 	SMODE_DISCO,
+	SMODE_BATTERY_DISP,
 	SMODE_OFF,
 	SMODE_NOF_MODES
 }simpleModes_t;
@@ -154,14 +156,15 @@ void loadMode(prog_mode_t mode);
 void loadLedSegFadeColour(discoCols_t col,ledSegmentFadeSetting_t* st);
 void loadLedSegPulseColour(discoCols_t col,ledSegmentPulseSetting_t* st);
 static void dummyLedTask();
+void displayBattery(uint8_t channel, uint8_t segment, uint16_t startLED);
 
 //Sets if the program goes into the staff
 #define STAFF	1
-#define GLOBAL_SETTING	6
+#define GLOBAL_SETTING	3
 #define UGLY_MODE_CHANGE_TIME	10000
 
 #define PULSE_FAST_PIXEL_TIME	1
-#define PULSE_NORMAL_PIXEL_TIME	2
+#define PULSE_NORMAL_PIXEL_TIME	1
 #define FADE_FAST_TIME		300
 #define FADE_NORMAL_TIME	700
 
@@ -170,51 +173,26 @@ uint8_t segmentArmRight=0;
 uint8_t segmentHead=0;
 uint8_t segmentTail=0;
 
+uint8_t segment1Up=0;	//45 LEDs
+uint8_t segment2Down=0;	//44 LEDs
+uint8_t segment3Up=0;	//44 LEDs
+
 static volatile IMUVals_t imuVals;
+volatile uint16_t batteryIndicatorStartLed=1;	//There are 156 and 157 LEDs on each side
 
 int main(int argc, char* argv[])
 {
 	SystemCoreClockUpdate();
 	timeInit();
 	swInit();
+	adcInit();
 	//extFetInit();
-	//onboardLedCtrlInit();
-	apa102Init(1,5);
+	onboardLedCtrlInit();
+	apa102Init(1,140);
 	apa102SetDefaultGlobal(GLOBAL_SETTING);
 	apa102UpdateStrip(APA_ALL_STRIPS);
-	ledSegmentPulseSetting_t pulse2;
-	loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse2);
-	pulse2.cycles =0;
-	pulse2.ledsFadeAfter = 1;
-	pulse2.ledsFadeBefore = 1;
-	pulse2.ledsMaxPower = 2;
-	pulse2.mode = LEDSEG_MODE_LOOP_END;
-	pulse2.pixelTime = 10;
-	pulse2.pixelsPerIteration = 1;
-	pulse2.startDir =1;
-	pulse2.startLed = 1;
-	ledSegmentFadeSetting_t fade2;
-	loadLedSegFadeColour(DISCO_COL_BLUE,&fade2);
-	fade2.cycles =0;
-	fade2.mode = LEDSEG_MODE_BOUNCE;
-	fade2.startDir = -1;
-	fade2.fadeTime = 700;
-	segmentTail=ledSegInitSegment(1,1,5,&pulse2,&fade2);
-	//mpu6050Init();
 
 	static uint32_t nextCall=0;
-
-	while(1)
-	{
-		poorMansOS();
-		if(systemTime>nextCall)
-		{
-			nextCall=systemTime+300;
-			//mpu6050GetAllValuesStruct(&imuVals,false);
-		}
-	}
-
-
 
 	//Ugly program "Full patte!", Which just sets all LEDs to max and then waits
 /*	apa102FillStrip(1,255,255,255,APA_MAX_GLOBAL_SETTING);
@@ -228,10 +206,10 @@ int main(int argc, char* argv[])
 	pulse.cycles =0;
 	pulse.ledsFadeAfter = 5;
 	pulse.ledsFadeBefore = 5;
-	pulse.ledsMaxPower = 25;
+	pulse.ledsMaxPower = 15;
 	pulse.mode = LEDSEG_MODE_LOOP_END;
-	pulse.pixelTime = 2;
-	pulse.pixelsPerIteration = 5;
+	pulse.pixelTime = PULSE_NORMAL_PIXEL_TIME;
+	pulse.pixelsPerIteration = 2;
 	pulse.startDir =1;
 	pulse.startLed = 1;
 	ledSegmentFadeSetting_t fade;
@@ -240,10 +218,15 @@ int main(int argc, char* argv[])
 	fade.mode = LEDSEG_MODE_BOUNCE;
 	fade.startDir = -1;
 	fade.fadeTime = 700;
-	segmentTail=ledSegInitSegment(1,1,170,&pulse,&fade);	//Todo: change back number to the correct number (150-isch)
+	apa102SetDefaultGlobal(4);
+	segment1Up=ledSegInitSegment(1,2,45,&pulse,&fade);	//Skip the first LED to sync up the pulses
+	segment3Up=ledSegInitSegment(1,90,133,&pulse,&fade);
+	pulse.startDir=-1;
+	pulse.startLed = 100;
+	segment2Down=ledSegInitSegment(1,46,89,&pulse,&fade);
 
 	//This is a loop for a simple user interface, with not as much control
-	simpleModes_t smode=SMODE_BLUE_FADE_YLW_PULSE;
+	simpleModes_t smode=SMODE_RED_FADE_NO_PULSE;
 	bool isActive=true;
 	bool pulseIsActive=true;
 	bool uglyModeChange=false;
@@ -317,6 +300,11 @@ int main(int argc, char* argv[])
 					loadLedSegFadeColour(DISCO_COL_RANDOM,&fade);
 					loadLedSegPulseColour(DISCO_COL_RANDOM,&pulse);
 					break;
+				case SMODE_BATTERY_DISP:
+				{
+					//Do nothing here
+					break;
+				}
 				case SMODE_OFF:	//turn LEDs off
 				{
 					fade.r_min=0;
@@ -336,16 +324,39 @@ int main(int argc, char* argv[])
 					break;
 				}
 			}
-			ledSegSetFade(segmentTail,&fade);
-			ledSegSetPulse(segmentTail,&pulse);
-			ledSegSetPulseActiveState(segmentTail,pulseIsActive);
+			//Update all segements
+
+			ledSegSetFade(segment1Up,&fade);
+			ledSegSetFade(segment2Down,&fade);
+			ledSegSetFade(segment3Up,&fade);
+			pulse.startDir=1;
+			pulse.startLed =1;
+			ledSegSetPulse(segment1Up,&pulse);
+			ledSegSetPulse(segment3Up,&pulse);
+			pulse.startDir=-1;
+			pulse.startLed =100;
+			ledSegSetPulse(segment2Down,&pulse);
+			ledSegSetPulseActiveState(segment1Up,pulseIsActive);
+			ledSegSetPulseActiveState(segment2Down,pulseIsActive);
+			ledSegSetPulseActiveState(segment3Up,pulseIsActive);
+
+			if(smode == SMODE_BATTERY_DISP)
+			{
+				//Pause The other segment (possible arm)
+				//Set LEDs in the correct place to the right colours, corresponding to battery level
+				ledSegSetPulseActiveState(segment1Up,false);
+				ledSegSetFadeActiveState(segment1Up,false);
+				displayBattery(1,segment1Up,batteryIndicatorStartLed);
+			}
 		}	//End of change mode clause
 
 		//Generate a pulse (and switch modes for the staff)
 		if(swGetRisingEdge(2))
 		{
-			apa102SetDefaultGlobal(APA_MAX_GLOBAL_SETTING);
-			ledSegRestart(segmentTail,true,true);
+			apa102SetDefaultGlobal(GLOBAL_SETTING*3);//)APA_MAX_GLOBAL_SETTING);
+			ledSegRestart(segment1Up,true,true);
+			ledSegRestart(segment2Down,true,true);
+			ledSegRestart(segment3Up,true,true);
 			uglyModeChangeActivateTime=systemTime+UGLY_MODE_CHANGE_TIME;
 		}
 		if(swGetFallingEdge(2))
@@ -360,7 +371,7 @@ int main(int argc, char* argv[])
 		}
 
 		//Set lights on/off
-		if(swGetFallingEdge(3))
+		/*if(swGetFallingEdge(3))
 		{
 			if(isActive)
 			{
@@ -374,7 +385,7 @@ int main(int argc, char* argv[])
 				ledSegSetPulse(segmentTail,&pulse);
 				isActive=true;
 			}
-		}
+		}*/
 		//Handle special modes
 		switch(smode)
 		{
@@ -385,9 +396,19 @@ int main(int argc, char* argv[])
 					nextDiscoUpdate=systemTime+FADE_FAST_TIME;
 					loadLedSegFadeColour(DISCO_COL_RANDOM,&fade);
 					loadLedSegPulseColour(DISCO_COL_RANDOM,&pulse);
-					ledSegSetFade(segmentTail,&fade);
-					ledSegSetPulse(segmentTail,&pulse);
-					ledSegSetPulseActiveState(segmentTail,pulseIsActive);
+					ledSegSetFade(segment1Up,&fade);
+					ledSegSetFade(segment2Down,&fade);
+					ledSegSetFade(segment3Up,&fade);
+					pulse.startDir=1;
+					pulse.startLed =1;
+					ledSegSetPulse(segment1Up,&pulse);
+					ledSegSetPulse(segment3Up,&pulse);
+					pulse.startDir=-1;
+					pulse.startLed =100;
+					ledSegSetPulse(segment2Down,&pulse);
+					ledSegSetPulseActiveState(segment1Up,pulseIsActive);
+					ledSegSetPulseActiveState(segment2Down,pulseIsActive);
+					ledSegSetPulseActiveState(segment3Up,pulseIsActive);
 				}
 				break;
 			}
@@ -400,6 +421,30 @@ int main(int argc, char* argv[])
 	}	//End of simple main loop mode handling
 }	//End of main()
 
+
+//The different battery levels in mV
+//The first is the lowest battery level
+#define NOF_BATTERY_LEVELS	5
+const uint16_t batteryLevels[NOF_BATTERY_LEVELS] ={3300,3500,3700,3900,4100};
+/*
+ * Displays the battery state on a given segment with a given start LED (takes a total of 5 LEDs)
+ */
+void displayBattery(uint8_t channel, uint8_t segment, uint16_t startLED)
+{
+	volatile uint16_t voltage=0;
+	voltage=adcGetBatVolt(channel);
+	for(uint8_t i=0;i<NOF_BATTERY_LEVELS;i++)
+	{
+		if(voltage>batteryLevels[i])
+		{
+			ledSegSetLed(segment,startLED+i,0,200,0);
+		}
+		else
+		{
+			ledSegSetLed(segment,startLED+i,200,0,0);
+		}
+	}
+}
 
 #define LED_DUMMY_NOF_STATES	4
 /*
@@ -771,7 +816,7 @@ bool poorMansOS()
 			dummyLedTask();
 		break;
 		case 3:
-			mpu6050Process();
+			//mpu6050Process();
 		break;
 	}
 	task++;
