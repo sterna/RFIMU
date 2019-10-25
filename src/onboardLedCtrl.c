@@ -115,9 +115,9 @@ void onboardLedCtrlInit(void)
 
 	//Init LEDs as white, awaiting commands
 	S_RGB_LED led;
-	led.red = 500;
-	led.green = 500;
-	led.blue = 500;
+	led.red = 0;
+	led.green =0;
+	led.blue = 0;
 	onboardLedCtrlWriteColours(led);
 
 	TIM_Cmd(RGB_TIMER,ENABLE);

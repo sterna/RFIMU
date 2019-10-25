@@ -160,7 +160,7 @@ void displayBattery(uint8_t channel, uint8_t segment, uint16_t startLED);
 
 //Sets if the program goes into the staff
 #define STAFF	1
-#define GLOBAL_SETTING	3
+#define GLOBAL_SETTING	5
 #define UGLY_MODE_CHANGE_TIME	10000
 
 #define PULSE_FAST_PIXEL_TIME	1
@@ -178,7 +178,7 @@ uint8_t segment2Down=0;	//44 LEDs
 uint8_t segment3Up=0;	//44 LEDs
 
 static volatile IMUVals_t imuVals;
-volatile uint16_t batteryIndicatorStartLed=1;	//There are 156 and 157 LEDs on each side
+volatile uint16_t batteryIndicatorStartLed=40;	//There are 156 and 157 LEDs on each side
 
 int main(int argc, char* argv[])
 {
@@ -425,6 +425,7 @@ int main(int argc, char* argv[])
 //The different battery levels in mV
 //The first is the lowest battery level
 #define NOF_BATTERY_LEVELS	5
+#define BATTERY_LEVEL_RED_PWR	250
 const uint16_t batteryLevels[NOF_BATTERY_LEVELS] ={3300,3500,3700,3900,4100};
 /*
  * Displays the battery state on a given segment with a given start LED (takes a total of 5 LEDs)
@@ -437,11 +438,11 @@ void displayBattery(uint8_t channel, uint8_t segment, uint16_t startLED)
 	{
 		if(voltage>batteryLevels[i])
 		{
-			ledSegSetLed(segment,startLED+i,0,200,0);
+			ledSegSetLed(segment,startLED+i,0,BATTERY_LEVEL_RED_PWR/2,0);
 		}
 		else
 		{
-			ledSegSetLed(segment,startLED+i,200,0,0);
+			ledSegSetLed(segment,startLED+i,BATTERY_LEVEL_RED_PWR,0,0);
 		}
 	}
 }
@@ -813,7 +814,7 @@ bool poorMansOS()
 			swDebounceTask();
 		break;
 		case 2:
-			dummyLedTask();
+			//dummyLedTask();
 		break;
 		case 3:
 			//mpu6050Process();
