@@ -158,9 +158,7 @@ void loadLedSegPulseColour(discoCols_t col,ledSegmentPulseSetting_t* st);
 static void dummyLedTask();
 void displayBattery(uint8_t channel, uint8_t segment, uint16_t startLED);
 
-//Sets if the program goes into the staff
-#define STAFF	1
-#define GLOBAL_SETTING	5
+#define GLOBAL_SETTING	4
 #define UGLY_MODE_CHANGE_TIME	10000
 
 #define PULSE_FAST_PIXEL_TIME	1
@@ -232,6 +230,7 @@ int main(int argc, char* argv[])
 	bool uglyModeChange=false;
 	uint32_t uglyModeChangeActivateTime=0;
 	uint32_t nextDiscoUpdate=0;
+	uint8_t globalSetting=GLOBAL_SETTING;
 	while(1)
 	{
 		poorMansOS();
@@ -324,8 +323,8 @@ int main(int argc, char* argv[])
 					break;
 				}
 			}
-			//Update all segements
 
+			//Update all segements
 			ledSegSetFade(segment1Up,&fade);
 			ledSegSetFade(segment2Down,&fade);
 			ledSegSetFade(segment3Up,&fade);
@@ -350,42 +349,33 @@ int main(int argc, char* argv[])
 			}
 		}	//End of change mode clause
 
+		if(swGetActiveForMoreThan(1,1000))
+		{
+			globalSetting++;
+			if(globalSetting>APA_MAX_GLOBAL_SETTING/2)
+			{
+				globalSetting=0;
+			}
+			apa102SetDefaultGlobal(globalSetting);
+		}
+
 		//Generate a pulse (and switch modes for the staff)
 		if(swGetRisingEdge(2))
 		{
-			apa102SetDefaultGlobal(GLOBAL_SETTING*3);//)APA_MAX_GLOBAL_SETTING);
+			apa102SetDefaultGlobal(globalSetting*3);//)APA_MAX_GLOBAL_SETTING);
 			ledSegRestart(segment1Up,true,true);
 			ledSegRestart(segment2Down,true,true);
 			ledSegRestart(segment3Up,true,true);
-			uglyModeChangeActivateTime=systemTime+UGLY_MODE_CHANGE_TIME;
 		}
 		if(swGetFallingEdge(2))
 		{
-			apa102SetDefaultGlobal(GLOBAL_SETTING);
+			apa102SetDefaultGlobal(globalSetting);
 		}
-		if(swGetState(2) && uglyModeChangeActivateTime<systemTime)
+		if(swGetActiveForMoreThan(2,UGLY_MODE_CHANGE_TIME))
 		{
-			apa102SetDefaultGlobal(GLOBAL_SETTING);
-			uglyModeChangeActivateTime=systemTime+UGLY_MODE_CHANGE_TIME;
+			apa102SetDefaultGlobal(globalSetting);
 			uglyModeChange=true;
 		}
-
-		//Set lights on/off
-		/*if(swGetFallingEdge(3))
-		{
-			if(isActive)
-			{
-				ledSegClearFade(segmentTail);
-				ledSegClearPulse(segmentTail);
-				isActive=false;
-			}
-			else
-			{
-				ledSegSetFade(segmentTail,&fade);
-				ledSegSetPulse(segmentTail,&pulse);
-				isActive=true;
-			}
-		}*/
 		//Handle special modes
 		switch(smode)
 		{

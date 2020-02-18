@@ -61,5 +61,6 @@ void swDebounceTask();
 bool swGetState(uint8_t sw);
 bool swGetRisingEdge(uint8_t sw);
 bool swGetFallingEdge(uint8_t sw);
+bool swGetActiveForMoreThan(uint8_t sw, uint32_t ms);
 
 #endif /* SW_H_ */
