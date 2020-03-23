@@ -48,19 +48,19 @@ void mpu6050Init()
 	}
 	//Behold all the magic numbers!
 	delay_ms(100);
-	i2cWriteRegisterBlocking(107,0);
-	delay_ms(1);
-	i2cWriteRegisterBlocking(0x19,7);
-	delay_ms(1);
-	i2cWriteRegisterBlocking(0x1A,3);
-	delay_ms(1);
+	i2cWriteRegisterBlocking(107,0);	//Reset all device registers and enable (power mgnt1 register)
+	delay_us(500);
+	i2cWriteRegisterBlocking(25,7);	//Sample rate divider. Sample rate is 1kHz/(1+val)->125Hz
+	delay_us(500);
+	i2cWriteRegisterBlocking(26,0b00000011);	//Global config, set sync on Gyro YOut
+	delay_us(500);
 
-	i2cWriteRegisterBlocking(0x1B,MPU6050_GYRO_SENS_COMMAND);
-	delay_ms(1);
-	i2cWriteRegisterBlocking(0x1C,MPU6050_ACC_SENS_COMMAND);
-	delay_ms(1);
-	i2cWriteRegisterBlocking(0x23,0);
-	delay_ms(1);
+	i2cWriteRegisterBlocking(27,MPU6050_GYRO_SENS_COMMAND);	//Gyroscope config. No self-test and sense mode at +/- 1000 deg/s
+	delay_us(500);
+	i2cWriteRegisterBlocking(28,MPU6050_ACC_SENS_COMMAND); //Accelermoter config. No self-test and sense mode at +/- 4g
+	delay_us(500);
+	i2cWriteRegisterBlocking(35,0);	//Fifo setting register, No FIFO enabled
+	delay_us(500);
 	//Todo: Consider enabling the data read interrupt (Write bit0=1  in register 0x38). Don't bother the other sources
 
 	mpuIsInited=1;
@@ -228,7 +228,7 @@ void I2C1_EV_IRQHandler()
 	case 1:
 		if(I2C_CheckEvent(I2C1,I2C_EVENT_MASTER_MODE_SELECT))
 		{
-			I2C_SendData(I2C1,0xD0|0);
+			I2C_SendData(I2C1,MPU6050_ADDR|0);
 			I2C_GenerateSTOP(I2C1,DISABLE);
 			I2C_GenerateSTART(I2C1,DISABLE);
 			state=2;
@@ -237,7 +237,7 @@ void I2C1_EV_IRQHandler()
 	case 2:
 		if(I2C_CheckEvent(I2C1,I2C_EVENT_MASTER_TRANSMITTER_MODE_SELECTED))
 		{
-			I2C_SendData(I2C1,0x3B);
+			I2C_SendData(I2C1,MPU6050_ACC_X_H);	//Start reading from AccX_H register
 			state=3;
 		}
 		break;
@@ -251,7 +251,7 @@ void I2C1_EV_IRQHandler()
 	case 4:
 		if(I2C_CheckEvent(I2C1,I2C_EVENT_MASTER_MODE_SELECT))
 		{
-			I2C_SendData(I2C1,0xD0|1);
+			I2C_SendData(I2C1,MPU6050_ADDR|1);
 			state=5;
 		}
 		break;
@@ -284,14 +284,21 @@ void I2C1_EV_IRQHandler()
 			{
 				I2C_AcknowledgeConfig(I2C1,DISABLE);
 				I2C_GenerateSTOP(I2C1,ENABLE);
+				state++;
 			}
-			if(state==20)
-			{
-				mpu6050ParseBuffer();
-				state=1;
-				MPU6050Busy=0;
-			}
+
 		}
+		break;
+	case 20:
+		//Make sure that NO FUCKING BYTE IS LEFT IN THE BUFFER!
+		//If there was interesting data, we will have take care of it already
+		while((I2C1->SR1 & I2C_SR1_BTF) || (I2C1->SR1 & I2C_SR1_RXNE))
+		{
+			I2C_ReceiveData(I2C1);
+		}
+		mpu6050ParseBuffer();
+		state=1;
+		MPU6050Busy=0;
 		break;
 	default:
 		state=1;
@@ -299,9 +306,10 @@ void I2C1_EV_IRQHandler()
 	}
 	if((lastState==state)&&I2C_CheckEvent(I2C1,I2C_EVENT_MASTER_MODE_SELECT))
 	{
+		//If this ever happens, something went wrong (I guess)?
 		state=1;
-	}
 
+	}
 	I2C_ClearITPendingBit(I2C1,I2C_IT_EVT);
 	I2C_ClearITPendingBit(I2C1,I2C_IT_BUF);
 }
@@ -310,17 +318,19 @@ void I2C1_EV_IRQHandler()
 void mpu6050Process()
 {
 	static uint32_t nextCallTime=0;
+	volatile static IMUVals_t vals;
 	if(nextCallTime<systemTime)
 	{
 		nextCallTime=systemTime+MPU_6050_PROCESS_PERIOD;
 		if(mpuIsInited)
 		{
-			if(MPU6050Busy)
+			if(!MPU6050Busy)
 			{
-				i2CReset();
+				//i2CReset();
+				MPU6050Busy=1;
+				I2C_GenerateSTART(I2C1,ENABLE);
 			}
-			MPU6050Busy=1;
-			I2C_GenerateSTART(I2C1,ENABLE);
+			mpu6050GetAllValuesStruct(&vals,false);
 		}
 	}
 }
@@ -415,8 +425,8 @@ static void i2cInitHw()
 	NVIC_InitTypeDef NVIC_InitStructure;
 	NVIC_InitStructure.NVIC_IRQChannelCmd=ENABLE;
 	NVIC_InitStructure.NVIC_IRQChannel=I2C1_EV_IRQn;
-	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority=5;
-	NVIC_InitStructure.NVIC_IRQChannelSubPriority=5;
+	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority=1;
+	NVIC_InitStructure.NVIC_IRQChannelSubPriority=1;
 	NVIC_Init(&NVIC_InitStructure);
 }
 
@@ -431,7 +441,7 @@ static void i2cWriteRegisterBlocking(uint8_t addr, uint8_t value)
 		mpuTimeoutTime=systemTime+MPU_TIMEOUT_MS;
 		I2C_GenerateSTART(I2C1,ENABLE);
 		while(!I2C_CheckEvent(I2C1,I2C_EVENT_MASTER_MODE_SELECT) && mpuTimeoutTime>systemTime);
-		I2C_SendData(I2C1,0xD0);
+		I2C_SendData(I2C1,MPU6050_ADDR);
 		while(!I2C_CheckEvent(I2C1,I2C_EVENT_MASTER_TRANSMITTER_MODE_SELECTED) && mpuTimeoutTime>systemTime);
 		I2C_SendData(I2C1,addr);
 		while(!I2C_CheckEvent(I2C1,I2C_EVENT_MASTER_BYTE_TRANSMITTED) && mpuTimeoutTime>systemTime);

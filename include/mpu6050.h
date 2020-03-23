@@ -33,6 +33,9 @@
 #define MPU6050_ACC_FULLSCALE	4
 #define MPU6050_ACC_SENS_COMMAND	MPU6050_ACC_SENS_4
 
+#define MPU6050_ADDR	0xD0
+#define MPU6050_ACC_X_H	59
+
 enum
 {
 	AXIS_X=0,
@@ -49,12 +52,12 @@ enum
  * Contatins the IMU values for all axis
  */
 typedef struct{
-	uint16_t accX;
-	uint16_t accY;
-	uint16_t accZ;
-	uint16_t roll;
-	uint16_t pitch;
-	uint16_t yaw;
+	int16_t accX;
+	int16_t accY;
+	int16_t accZ;
+	int16_t roll;
+	int16_t pitch;
+	int16_t yaw;
 }IMUVals_t;
 
 void mpu6050Init();

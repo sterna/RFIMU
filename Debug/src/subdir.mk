@@ -4,6 +4,7 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
+../src/MPU6050_2.c \
 ../src/adc.c \
 ../src/extFetCtrl.c \
 ../src/ledPwm.c \
@@ -14,6 +15,7 @@ C_SRCS += \
 ../src/uart.c 
 
 OBJS += \
+./src/MPU6050_2.o \
 ./src/adc.o \
 ./src/extFetCtrl.o \
 ./src/ledPwm.o \
@@ -24,6 +26,7 @@ OBJS += \
 ./src/uart.o 
 
 C_DEPS += \
+./src/MPU6050_2.d \
 ./src/adc.d \
 ./src/extFetCtrl.d \
 ./src/ledPwm.d \

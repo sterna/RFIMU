@@ -157,6 +157,7 @@ void loadLedSegFadeColour(discoCols_t col,ledSegmentFadeSetting_t* st);
 void loadLedSegPulseColour(discoCols_t col,ledSegmentPulseSetting_t* st);
 static void dummyLedTask();
 void displayBattery(uint8_t channel, uint8_t segment, uint16_t startLED);
+void handleApplicationSimple();
 
 #define GLOBAL_SETTING	4
 #define UGLY_MODE_CHANGE_TIME	10000
@@ -189,228 +190,243 @@ int main(int argc, char* argv[])
 	apa102Init(1,140);
 	apa102SetDefaultGlobal(GLOBAL_SETTING);
 	apa102UpdateStrip(APA_ALL_STRIPS);
+	mpu6050Init();
 
-	static uint32_t nextCall=0;
+	while(1)
+	{
+		poorMansOS();
+	}
+
+}	//End of main()
+
+
+/*
+ * Main application to make a (somewhat) simple mode handling
+ */
+void handleApplicationSimple()
+{
 
 	//Ugly program "Full patte!", Which just sets all LEDs to max and then waits
-/*	apa102FillStrip(1,255,255,255,APA_MAX_GLOBAL_SETTING);
+	/*	apa102FillStrip(1,255,255,255,APA_MAX_GLOBAL_SETTING);
 	apa102UpdateStrip(APA_ALL_STRIPS);
 	while(1)
 	{
 	}
-*/
-	ledSegmentPulseSetting_t pulse;
-	loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
-	pulse.cycles =0;
-	pulse.ledsFadeAfter = 5;
-	pulse.ledsFadeBefore = 5;
-	pulse.ledsMaxPower = 15;
-	pulse.mode = LEDSEG_MODE_LOOP_END;
-	pulse.pixelTime = PULSE_NORMAL_PIXEL_TIME;
-	pulse.pixelsPerIteration = 2;
-	pulse.startDir =1;
-	pulse.startLed = 1;
-	ledSegmentFadeSetting_t fade;
-	loadLedSegFadeColour(DISCO_COL_BLUE,&fade);
-	fade.cycles =0;
-	fade.mode = LEDSEG_MODE_BOUNCE;
-	fade.startDir = -1;
-	fade.fadeTime = 700;
-	apa102SetDefaultGlobal(4);
-	segment1Up=ledSegInitSegment(1,2,45,&pulse,&fade);	//Skip the first LED to sync up the pulses
-	segment3Up=ledSegInitSegment(1,90,133,&pulse,&fade);
-	pulse.startDir=-1;
-	pulse.startLed = 100;
-	segment2Down=ledSegInitSegment(1,46,89,&pulse,&fade);
-
+	 */
+	static bool setupDone=false;
 	//This is a loop for a simple user interface, with not as much control
-	simpleModes_t smode=SMODE_RED_FADE_NO_PULSE;
-	bool isActive=true;
-	bool pulseIsActive=true;
-	bool uglyModeChange=false;
-	uint32_t uglyModeChangeActivateTime=0;
-	uint32_t nextDiscoUpdate=0;
-	uint8_t globalSetting=GLOBAL_SETTING;
-	while(1)
+	static ledSegmentPulseSetting_t pulse;
+	static ledSegmentFadeSetting_t fade;
+	static simpleModes_t smode=SMODE_RED_FADE_NO_PULSE;
+	static bool isActive=true;
+	static bool pulseIsActive=true;
+	static bool uglyModeChange=false;
+	static uint32_t uglyModeChangeActivateTime=0;
+	static uint32_t nextDiscoUpdate=0;
+	static uint8_t globalSetting=GLOBAL_SETTING;
+	if(!setupDone)
 	{
-		poorMansOS();
-		//Change mode
-		if(swGetFallingEdge(1) || uglyModeChange)
-		{
-			pulseIsActive=true;
-			uglyModeChange=false;
-			//Handles if something needs to be done when changing from a state
-			switch(smode)
-			{
-				case SMODE_DISCO:
-				{
-					pulse.pixelTime=PULSE_NORMAL_PIXEL_TIME;
-					fade.fadeTime=FADE_NORMAL_TIME;
-					break;
-				}
-				default:
-				{
-					//Do nothing for default
-				}
-			}
-			smode++;
-			if(smode>=SMODE_NOF_MODES)
-			{
-				smode=0;
-			}
-			switch(smode)
-			{
-				case SMODE_BLUE_FADE_YLW_PULSE:
-					loadLedSegFadeColour(DISCO_COL_BLUE,&fade);
-					loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
-				break;
-				case SMODE_CYAN_FADE_YLW_PULSE:
-					loadLedSegFadeColour(DISCO_COL_CYAN,&fade);
-					loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
-				break;
-				case SMODE_YLW_FADE_GREEN_PULSE:
-					loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
-					loadLedSegPulseColour(DISCO_COL_GREEN,&pulse);
-					break;
-				case SMODE_RED_FADE_YLW_PULSE:
-					loadLedSegFadeColour(DISCO_COL_RED,&fade);
-					loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
-					break;
-				case SMODE_YLW_FADE_PURPLE_PULSE:
-					loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
-					loadLedSegPulseColour(DISCO_COL_PURPLE,&pulse);
-					break;
-				case SMODE_CYAN_FADE_NO_PULSE:
-					loadLedSegFadeColour(DISCO_COL_CYAN,&fade);
-					pulseIsActive=false;
-					break;
-				case SMODE_YLW_FADE_NO_PULSE:
-					loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
-					pulseIsActive=false;
-					break;
-				case SMODE_RED_FADE_NO_PULSE:
-					loadLedSegFadeColour(DISCO_COL_RED,&fade);
-					pulseIsActive=false;
-					break;
-				case SMODE_DISCO:
-					pulse.pixelTime=PULSE_FAST_PIXEL_TIME;
-					fade.fadeTime=FADE_FAST_TIME;	//The break is omitted by design, since SMODE_DISCO does the same thing as SMODE_RANDOM
-				case SMODE_RANDOM:
-					loadLedSegFadeColour(DISCO_COL_RANDOM,&fade);
-					loadLedSegPulseColour(DISCO_COL_RANDOM,&pulse);
-					break;
-				case SMODE_BATTERY_DISP:
-				{
-					//Do nothing here
-					break;
-				}
-				case SMODE_OFF:	//turn LEDs off
-				{
-					fade.r_min=0;
-					fade.r_max=0;
-					fade.g_min=0;
-					fade.g_max=0;
-					fade.b_min=0;
-					fade.b_max=0;
-					pulse.r_max=0;
-					pulse.g_max=0;
-					pulse.b_max=0;
-					break;
-				}
-				case SMODE_NOF_MODES:	//Should never happen
-				{
-					smode=0;
-					break;
-				}
-			}
+		loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
+		pulse.cycles =0;
+		pulse.ledsFadeAfter = 5;
+		pulse.ledsFadeBefore = 5;
+		pulse.ledsMaxPower = 15;
+		pulse.mode = LEDSEG_MODE_LOOP_END;
+		pulse.pixelTime = PULSE_NORMAL_PIXEL_TIME;
+		pulse.pixelsPerIteration = 2;
+		pulse.startDir =1;
+		pulse.startLed = 1;
 
-			//Update all segements
-			ledSegSetFade(segment1Up,&fade);
-			ledSegSetFade(segment2Down,&fade);
-			ledSegSetFade(segment3Up,&fade);
-			pulse.startDir=1;
-			pulse.startLed =1;
-			ledSegSetPulse(segment1Up,&pulse);
-			ledSegSetPulse(segment3Up,&pulse);
-			pulse.startDir=-1;
-			pulse.startLed =100;
-			ledSegSetPulse(segment2Down,&pulse);
-			ledSegSetPulseActiveState(segment1Up,pulseIsActive);
-			ledSegSetPulseActiveState(segment2Down,pulseIsActive);
-			ledSegSetPulseActiveState(segment3Up,pulseIsActive);
+		loadLedSegFadeColour(DISCO_COL_BLUE,&fade);
+		fade.cycles =0;
+		fade.mode = LEDSEG_MODE_BOUNCE;
+		fade.startDir = -1;
+		fade.fadeTime = 700;
+		apa102SetDefaultGlobal(4);
+		segment1Up=ledSegInitSegment(1,2,45,&pulse,&fade);	//Skip the first LED to sync up the pulses
+		segment3Up=ledSegInitSegment(1,90,133,&pulse,&fade);
+		pulse.startDir=-1;
+		pulse.startLed = 100;
+		segment2Down=ledSegInitSegment(1,46,89,&pulse,&fade);
+		setupDone=true;
+	}
 
-			if(smode == SMODE_BATTERY_DISP)
-			{
-				//Pause The other segment (possible arm)
-				//Set LEDs in the correct place to the right colours, corresponding to battery level
-				ledSegSetPulseActiveState(segment1Up,false);
-				ledSegSetFadeActiveState(segment1Up,false);
-				displayBattery(1,segment1Up,batteryIndicatorStartLed);
-			}
-		}	//End of change mode clause
-
-		if(swGetActiveForMoreThan(1,1000))
-		{
-			globalSetting++;
-			if(globalSetting>APA_MAX_GLOBAL_SETTING/2)
-			{
-				globalSetting=0;
-			}
-			apa102SetDefaultGlobal(globalSetting);
-		}
-
-		//Generate a pulse (and switch modes for the staff)
-		if(swGetRisingEdge(2))
-		{
-			apa102SetDefaultGlobal(globalSetting*3);//)APA_MAX_GLOBAL_SETTING);
-			ledSegRestart(segment1Up,true,true);
-			ledSegRestart(segment2Down,true,true);
-			ledSegRestart(segment3Up,true,true);
-		}
-		if(swGetFallingEdge(2))
-		{
-			apa102SetDefaultGlobal(globalSetting);
-		}
-		if(swGetActiveForMoreThan(2,UGLY_MODE_CHANGE_TIME))
-		{
-			apa102SetDefaultGlobal(globalSetting);
-			uglyModeChange=true;
-		}
-		//Handle special modes
+	//Change mode
+	if(swGetFallingEdge(1) || uglyModeChange)
+	{
+		pulseIsActive=true;
+		uglyModeChange=false;
+		//Handles if something needs to be done when changing from a state
 		switch(smode)
 		{
-			case SMODE_DISCO:
-			{
-				if(systemTime>nextDiscoUpdate)
-				{
-					nextDiscoUpdate=systemTime+FADE_FAST_TIME;
-					loadLedSegFadeColour(DISCO_COL_RANDOM,&fade);
-					loadLedSegPulseColour(DISCO_COL_RANDOM,&pulse);
-					ledSegSetFade(segment1Up,&fade);
-					ledSegSetFade(segment2Down,&fade);
-					ledSegSetFade(segment3Up,&fade);
-					pulse.startDir=1;
-					pulse.startLed =1;
-					ledSegSetPulse(segment1Up,&pulse);
-					ledSegSetPulse(segment3Up,&pulse);
-					pulse.startDir=-1;
-					pulse.startLed =100;
-					ledSegSetPulse(segment2Down,&pulse);
-					ledSegSetPulseActiveState(segment1Up,pulseIsActive);
-					ledSegSetPulseActiveState(segment2Down,pulseIsActive);
-					ledSegSetPulseActiveState(segment3Up,pulseIsActive);
-				}
-				break;
-			}
-			default:
-			{
-				//Do nothing for default
-				break;
-			}
+		case SMODE_DISCO:
+		{
+			pulse.pixelTime=PULSE_NORMAL_PIXEL_TIME;
+			fade.fadeTime=FADE_NORMAL_TIME;
+			break;
 		}
-	}	//End of simple main loop mode handling
-}	//End of main()
+		default:
+		{
+			//Do nothing for default
+		}
+		}
+		smode++;
+		if(smode>=SMODE_NOF_MODES)
+		{
+			smode=0;
+		}
+		switch(smode)
+		{
+		case SMODE_BLUE_FADE_YLW_PULSE:
+			loadLedSegFadeColour(DISCO_COL_BLUE,&fade);
+			loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
+			break;
+		case SMODE_CYAN_FADE_YLW_PULSE:
+			loadLedSegFadeColour(DISCO_COL_CYAN,&fade);
+			loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
+			break;
+		case SMODE_YLW_FADE_GREEN_PULSE:
+			loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
+			loadLedSegPulseColour(DISCO_COL_GREEN,&pulse);
+			break;
+		case SMODE_RED_FADE_YLW_PULSE:
+			loadLedSegFadeColour(DISCO_COL_RED,&fade);
+			loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
+			break;
+		case SMODE_YLW_FADE_PURPLE_PULSE:
+			loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
+			loadLedSegPulseColour(DISCO_COL_PURPLE,&pulse);
+			break;
+		case SMODE_CYAN_FADE_NO_PULSE:
+			loadLedSegFadeColour(DISCO_COL_CYAN,&fade);
+			pulseIsActive=false;
+			break;
+		case SMODE_YLW_FADE_NO_PULSE:
+			loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
+			pulseIsActive=false;
+			break;
+		case SMODE_RED_FADE_NO_PULSE:
+			loadLedSegFadeColour(DISCO_COL_RED,&fade);
+			pulseIsActive=false;
+			break;
+		case SMODE_DISCO:
+			pulse.pixelTime=PULSE_FAST_PIXEL_TIME;
+			fade.fadeTime=FADE_FAST_TIME;	//The break is omitted by design, since SMODE_DISCO does the same thing as SMODE_RANDOM
+		case SMODE_RANDOM:
+			loadLedSegFadeColour(DISCO_COL_RANDOM,&fade);
+			loadLedSegPulseColour(DISCO_COL_RANDOM,&pulse);
+			break;
+		case SMODE_BATTERY_DISP:
+		{
+			//Do nothing here
+			break;
+		}
+		case SMODE_OFF:	//turn LEDs off
+		{
+			fade.r_min=0;
+			fade.r_max=0;
+			fade.g_min=0;
+			fade.g_max=0;
+			fade.b_min=0;
+			fade.b_max=0;
+			pulse.r_max=0;
+			pulse.g_max=0;
+			pulse.b_max=0;
+			break;
+		}
+		case SMODE_NOF_MODES:	//Should never happen
+		{
+			smode=0;
+			break;
+		}
+		}
 
+		//Update all segements
+		ledSegSetFade(segment1Up,&fade);
+		ledSegSetFade(segment2Down,&fade);
+		ledSegSetFade(segment3Up,&fade);
+		pulse.startDir=1;
+		pulse.startLed =1;
+		ledSegSetPulse(segment1Up,&pulse);
+		ledSegSetPulse(segment3Up,&pulse);
+		pulse.startDir=-1;
+		pulse.startLed =100;
+		ledSegSetPulse(segment2Down,&pulse);
+		ledSegSetPulseActiveState(segment1Up,pulseIsActive);
+		ledSegSetPulseActiveState(segment2Down,pulseIsActive);
+		ledSegSetPulseActiveState(segment3Up,pulseIsActive);
+
+		if(smode == SMODE_BATTERY_DISP)
+		{
+			//Pause The other segment (possible arm)
+			//Set LEDs in the correct place to the right colours, corresponding to battery level
+			ledSegSetPulseActiveState(segment1Up,false);
+			ledSegSetFadeActiveState(segment1Up,false);
+			displayBattery(1,segment1Up,batteryIndicatorStartLed);
+		}
+	}	//End of change mode clause
+
+	if(swGetActiveForMoreThan(1,1000))
+	{
+		globalSetting++;
+		if(globalSetting>APA_MAX_GLOBAL_SETTING/2)
+		{
+			globalSetting=0;
+		}
+		apa102SetDefaultGlobal(globalSetting);
+	}
+
+	//Generate a pulse (and switch modes for the staff)
+	if(swGetRisingEdge(2))
+	{
+		apa102SetDefaultGlobal(globalSetting*3);//)APA_MAX_GLOBAL_SETTING);
+		ledSegRestart(segment1Up,true,true);
+		ledSegRestart(segment2Down,true,true);
+		ledSegRestart(segment3Up,true,true);
+	}
+	if(swGetFallingEdge(2))
+	{
+		apa102SetDefaultGlobal(globalSetting);
+	}
+	if(swGetActiveForMoreThan(2,UGLY_MODE_CHANGE_TIME))
+	{
+		apa102SetDefaultGlobal(globalSetting);
+		uglyModeChange=true;
+	}
+	//Handle special modes
+	switch(smode)
+	{
+		case SMODE_DISCO:
+		{
+			if(systemTime>nextDiscoUpdate)
+			{
+				nextDiscoUpdate=systemTime+FADE_FAST_TIME;
+				loadLedSegFadeColour(DISCO_COL_RANDOM,&fade);
+				loadLedSegPulseColour(DISCO_COL_RANDOM,&pulse);
+				ledSegSetFade(segment1Up,&fade);
+				ledSegSetFade(segment2Down,&fade);
+				ledSegSetFade(segment3Up,&fade);
+				pulse.startDir=1;
+				pulse.startLed =1;
+				ledSegSetPulse(segment1Up,&pulse);
+				ledSegSetPulse(segment3Up,&pulse);
+				pulse.startDir=-1;
+				pulse.startLed =100;
+				ledSegSetPulse(segment2Down,&pulse);
+				ledSegSetPulseActiveState(segment1Up,pulseIsActive);
+				ledSegSetPulseActiveState(segment2Down,pulseIsActive);
+				ledSegSetPulseActiveState(segment3Up,pulseIsActive);
+			}
+			break;
+		}
+		default:
+		{
+			//Do nothing for default
+			break;
+		}
+	}
+	//End of simple main loop mode handling
+}
 
 //The different battery levels in mV
 //The first is the lowest battery level
@@ -783,7 +799,7 @@ void loadMode(prog_mode_t mode)
 }
 
 static volatile bool mutex=false;
-#define OS_NOF_TASKS 4
+#define OS_NOF_TASKS 5
 /*
  * Semi-OS, used for tasks that are not extremely time critical and might take a while to perform
  */
@@ -798,16 +814,19 @@ bool poorMansOS()
 	switch(task)
 	{
 		case 0:
-			ledSegRunIteration();
+			handleApplicationSimple();
 		break;
 		case 1:
-			swDebounceTask();
+			ledSegRunIteration();
 		break;
 		case 2:
-			//dummyLedTask();
+			swDebounceTask();
 		break;
 		case 3:
-			//mpu6050Process();
+			dummyLedTask();
+		break;
+		case 4:
+			mpu6050Process();
 		break;
 	}
 	task++;
