@@ -185,6 +185,7 @@ int main(int argc, char* argv[])
 	timeInit();
 	swInit();
 	adcInit();
+	uart1Init(115200);
 	//extFetInit();
 	onboardLedCtrlInit();
 	apa102Init(1,140);

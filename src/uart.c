@@ -11,13 +11,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#include "xprintf.h"
 
 static void uartPutc(uint8_t ch);
 
 volatile unsigned char uartLastByte=0;
 volatile char uartTxStringBuffer[UART_TX_BUFFER_SIZE];
 volatile unsigned char uartDMAGotError = 0;
+char* DMABuffer=0;
+unsigned char UartDMABusy=0;
 
 
 
@@ -168,15 +169,56 @@ void uartSendString(char* s)
 	}
 }
 
-char* DMABuffer=0;
-unsigned char DMABusy=0;
+/*
+ * Transmits data one the form ",<key>:<value>"
+ * Note: Key must be a null-terminated string
+ * Key + string must not longer than 20 characters be longer than
+ */
+void uartSendKeyVal(char* key, int32_t val, bool newline)
+{
+	//Wait until DMA is free
+	while(uartGetDMAStatus()){}
+	uint8_t c=0;
+	c=xsprintf(uartTxStringBuffer,",%s:%d",key,val);
+	if(newline)
+	{
+		uartTxStringBuffer[c++]='\n';
+		uartTxStringBuffer[c]='\0';
+	}
+	uartSendStringDMA(uartTxStringBuffer,c,0);
+}
+
+/*
+ * Sends a series of comma-separated values
+ * Messages will be truncated to 50 chars
+ */
+void uartSendCSV(int32_t* vals,uint8_t n, bool newline)
+{
+	//Wait until DMA is free
+	while(uartGetDMAStatus()){}
+	uint8_t c=0;
+	char* ptr=uartTxStringBuffer;
+	uint8_t i=0;
+	while(n-->0 && c<UART_TX_BUFFER_SIZE)
+	{
+		c+=xsprintf((char*)(ptr),"%d,",vals[i]);
+		ptr=(char*)(uartTxStringBuffer+c);
+		i++;
+	}
+	if(newline)
+	{
+		uartTxStringBuffer[c++]='\n';
+		uartTxStringBuffer[c]='\0';
+	}
+	uartSendStringDMA(uartTxStringBuffer,c,false);
+}
 
 /*
  * Indicates if an uart DMA transfer is in progress
  */
 unsigned char uartGetDMAStatus()
 {
-	return (DMABusy || !USART_GetFlagStatus(USART1, USART_FLAG_TC));
+	return (UartDMABusy || !USART_GetFlagStatus(USART1, USART_FLAG_TC));
 }
 
 /*
@@ -192,7 +234,7 @@ unsigned char uartGetDMAStatus()
 unsigned char uartSendStringDMA(char* sendString,unsigned short length, unsigned char copy)
 {
 	//If a DMA transfer is active, skip this transfer request
-	if(!DMABusy && sendString)
+	if(!UartDMABusy && sendString)
 	{
 		DMA_Cmd(DMA1_Channel4,DISABLE);
 		//If length is 0, count the number of characters to be sent
@@ -218,7 +260,7 @@ unsigned char uartSendStringDMA(char* sendString,unsigned short length, unsigned
 		}
 		//After this command, data will be sent automagically through the uart
 		//When DMA is done, an interrupt is generated
-		DMABusy=1;
+		UartDMABusy=1;
 		DMA_Cmd(DMA1_Channel4,ENABLE);
 		return 1;
 	}
@@ -380,7 +422,7 @@ void DMA1_Channel4_IRQHandler()
 		DMA1->IFCR = DMA1_FLAG_TC4;
 		free(DMABuffer);
 		DMABuffer=0;
-		DMABusy=0;
+		UartDMABusy=0;
 	}
 	DMA_Cmd(DMA1_Channel4,DISABLE);
 }

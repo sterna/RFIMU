@@ -8,6 +8,10 @@
 #ifndef UART_H_
 #define UART_H_
 
+#include <stdbool.h>
+#include <stdint.h>
+#include "xprintf.h"
+
 void uart1Init(unsigned long baud);
 void uartInitDMA();
 void uartPutcDMA(unsigned char c);
@@ -15,6 +19,8 @@ unsigned char uartGetc();
 void uartSendString(char* s);
 unsigned char uartSendStringDMA(char* sendString,unsigned short length, unsigned char copy);
 unsigned char uartGetDMAStatus();
+void uartSendKeyVal(char* key, int32_t val, bool newline);
+void uartSendCSV(int32_t* vals,uint8_t n, bool newline);
 
 extern volatile unsigned char motorRegPString[10];
 extern volatile unsigned char motorRegIString[10];
@@ -30,6 +36,7 @@ extern volatile unsigned char uartLastByte;
 extern volatile unsigned char uartStatus;
 extern volatile unsigned char uartRxBuffer[20];
 extern volatile unsigned char uartCurrentCmd;
+
 
 //Uart commands
 enum
