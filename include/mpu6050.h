@@ -86,8 +86,8 @@ typedef struct{
 
 typedef struct{
 	int32_t roll;
-	int32_t yaw;
 	int32_t pitch;
+	int32_t yaw;
 }gyroVals_t;
 
 void mpu6050Init();

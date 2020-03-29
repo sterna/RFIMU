@@ -28,7 +28,7 @@ volatile int16_t IMUValsCorrectUnits[AXIS_NOF];
 //Raw offsets for the IMU
 static int16_t IMUValOffsets[AXIS_NOF];
 //Indicates if an axis shall be inverted or not. Set 1 for normal, and -1 for inverted. Order is given in the axis enum
-static const int8_t IMUAxisInversions[AXIS_NOF]={1,1,1,1,1,1};
+static const int8_t IMUAxisInversions[AXIS_NOF]={1,1,1,-1,1,1};
 
 //Contains the constant offset seen for different values (calibrated against earth gravity)
 //Offsets are in milli g and deg/s respectively
@@ -282,20 +282,20 @@ void mpu6050TransmitRaw(bool csv)
 		csvValsAcc[0]=mpu6050ConvertAccToG(vals.accX);
 		csvValsAcc[1]=mpu6050ConvertAccToG(vals.accY);
 		csvValsAcc[2]=mpu6050ConvertAccToG(vals.accZ);
-		csvValsAcc[3]=calculateTotalForceVector(csvValsAcc);
-		//uartSendCSV(csvValsAcc,4,false);
-		/*csvValsGyro[0]=mpu6050ConvertGyroToDegS(vals.roll);
+		//csvValsAcc[3]=calculateTotalForceVector(csvValsAcc);
+		uartSendCSV(csvValsAcc,3,false);
+		csvValsGyro[0]=mpu6050ConvertGyroToDegS(vals.roll);
 		csvValsGyro[1]=mpu6050ConvertGyroToDegS(vals.pitch);
-		csvValsGyro[2]=mpu6050ConvertGyroToDegS(vals.yaw);*/
+		csvValsGyro[2]=mpu6050ConvertGyroToDegS(vals.yaw);
 		if(mpu6050MotionEventActive(MTN_EVT_NO_MOTION_ALL))
 		{
-			csvValsAcc[4]=1000;
+			csvValsGyro[3]=1000;
 		}
 		else
 		{
-			csvValsAcc[4]=500;
+			csvValsGyro[3]=500;
 		}
-		uartSendCSV(csvValsAcc,5,false);	//Todo: change back to true and to gyro
+		uartSendCSV(csvValsGyro,4,false);	//Todo: change back to true and to gyro
 	}
 	else
 	{
@@ -314,8 +314,10 @@ static int16_t noMotionThresholdGyro=15;
 //The shortest time needed for noMotionToBeValid
 //static uint32_t noMotionThresholdSamples=5;
 const int32_t notMotionAcc=1000;
-static volatile int32_t gyroAgWeight=0;
+static volatile int32_t gyroAgWeight=10;
 const uint32_t gyroRecalibrateTime=5000;
+volatile int32_t accNewWeight=30;
+const int32_t accNewWeightMax=100;
 
 /*
  * This function will do all the math to estimate various things
@@ -331,12 +333,16 @@ void mpu6050CalculateEvents()
 	//static uint32_t noMotionCounter=0;
 	static int32_t gyroAgXZLast=0;
 	static int32_t gyroAgYZLast=0;
+	static accVals_t accValsLP;		//Low-pass-filtered acceleration values
+	static accVals_t accValsLast;	//Acceleration vals in milliG from last iteration
+	static gyroVals_t gyroValsLast;	//Gyro vals in deg/s from last iteration
+
 	int32_t td=0;
 	IMUVals_t test;
+
+	//Current acc vals
 	accVals_t accVals;			//Acceleration vals in milliG.
-	accVals_t accValsLast;		//Acceleration vals in milliG from last iteration
 	gyroVals_t gyroVals;		//Gyro vals in deg/s.
-	gyroVals_t gyroValsLast;	//Gyro vals in deg/s from last iteration
 
 	//If lastCallTime is 0, this is the first the function is run. Here we can do inits
 	if(!lastCallTime)
@@ -348,6 +354,9 @@ void mpu6050CalculateEvents()
 		accValsLast.accX=0;
 		accValsLast.accY=0;
 		accValsLast.accZ=0;
+		accValsLP.accX=0;
+		accValsLP.accY=0;
+		accValsLP.accZ=0;
 	}
 	td=systemTime-lastCallTime;
 	lastCallTime=systemTime;
@@ -359,11 +368,15 @@ void mpu6050CalculateEvents()
 	accVals.accY=(int32_t)mpu6050ConvertAccToG(test.accY);
 	accVals.accZ=(int32_t)mpu6050ConvertAccToG(test.accZ);
 
+	accValsLP.accX = (accVals.accX*accNewWeight + (accNewWeightMax-accNewWeight)*accValsLP.accX) / accNewWeightMax;
+	accValsLP.accY = (accVals.accY*accNewWeight + (accNewWeightMax-accNewWeight)*accValsLP.accY) / accNewWeightMax;
+	accValsLP.accZ = (accVals.accZ*accNewWeight + (accNewWeightMax-accNewWeight)*accValsLP.accZ) / accNewWeightMax;
+
 	gyroVals.roll=(int32_t)mpu6050ConvertGyroToDegS(test.roll);
 	gyroVals.yaw=(int32_t)mpu6050ConvertGyroToDegS(test.yaw);
 	gyroVals.pitch=(int32_t)mpu6050ConvertGyroToDegS(test.pitch);
 
-	mpu6050TransmitRaw(true);
+	//mpu6050TransmitRaw(true);
 	int32_t totalAccVector=calculateTotalForceVectorStruct(&accVals);
 	//uartSendKeyVal("Vect",totalAccVector,true);
 
@@ -393,54 +406,72 @@ void mpu6050CalculateEvents()
 
 	//Create trim accelerations to avoid weird edge-cases with atan
 	accVals_t accSafe;
-	accSafe.accX=accVals.accX;
-	accSafe.accY=accVals.accY;
-	accSafe.accZ=accVals.accZ;
-	const int16_t smallestValue=30;
-	if(abs(accVals.accX)<smallestValue)
+	accSafe.accX=accValsLP.accX;
+	accSafe.accY=accValsLP.accY;
+	accSafe.accZ=accValsLP.accZ;
+	static volatile int16_t smallestValueXY=150;
+	static volatile int16_t smallestValueZ=30;
+	static volatile int16_t largestAngle=150;
+	if(abs(accVals.accX) < smallestValueXY && (abs(accVals.accY) > (notMotionAcc-smallestValueXY)))
 	{
-		accSafe.accX=smallestValue*utilSign(accVals.accX);
+		accSafe.accX=0;
 	}
-	if(abs(accVals.accY)<smallestValue)
+	if(abs(accVals.accY)<smallestValueXY && (abs(accVals.accX) > (notMotionAcc-smallestValueXY)))
 	{
-		accSafe.accY=smallestValue*utilSign(accVals.accY);
+		accSafe.accY=0;
 	}
-	if(abs(accVals.accZ)<smallestValue)
+	if(abs(accVals.accZ)<smallestValueZ)
 	{
-		accSafe.accZ=smallestValue*utilSign(accVals.accZ);
+		accSafe.accZ=smallestValueZ*utilSign(accVals.accZ);
 	}
-	//The angle towards the ground during tilt around the Y axis (left/right)
-	int16_t accAgXZ = (int16_t)(atan2f((float)accSafe.accX,(float)accSafe.accZ)*180.0/PI);
+	//The angle towards the ground during tilt around the Y axis (left/right) TODO: Add round()
+	int16_t accAgXZ = (int16_t)(roundf(atan2f((float)accSafe.accX,(float)accSafe.accZ)*180.0/PI));
+	if(abs(accAgXZ)>largestAngle)
+	{
+		accAgXZ=0;
+	}
 	//The angle towards the ground during tilt around the X axis (front/back)
-	int16_t accAgYZ = (int16_t)(atan2f((float)accSafe.accY,(float)accSafe.accZ)*180.0/PI);
+	int16_t accAgYZ = (int16_t)(roundf(atan2f((float)accSafe.accY,(float)accSafe.accZ)*180.0/PI));
+	if(abs(accAgYZ)>largestAngle)
+	{
+		accAgYZ=0;
+	}
 	//int16_t agFrontBack = agZ*utilSign(accVals[AXIS_Y]);
 
 
-	//Using Gyro to get the angle is completely worthless!!! It just doesn't work at all!
+	//Using Gyro to get the angle is almost completely worthless!!! It just doesn't work at all!
 
-	/*
+
 	//The gyro angles are in milli deg (to avoid floating point and precision losses)
-	int32_t gyroAgXZ = gyroAgXZLast + td*(gyroVals.roll+gyroValsLast.roll)/2;
+	int32_t gyroAgXZ = gyroAgXZLast + td*(gyroVals.pitch+gyroValsLast.pitch)/2;
 	gyroAgXZLast=gyroAgXZ;
-	int32_t gyroAgYZ = gyroAgYZLast + td*(gyroVals.pitch+gyroValsLast.pitch)/2;
+	int32_t gyroAgYZ = gyroAgYZLast + td*(gyroVals.roll+gyroValsLast.roll)/2;
 	gyroAgYZLast=gyroAgYZ;
 	//Whenever we're not moving, 0 the last angle, to avoid strange buildup (the gyro is mostly good when moving)
-	if(mpu6050MotionEventActive(MTN_EVT_NO_MOTION_ALL))
+	//Todo: Rewrite the time trigger on this, since it will be always true after gyroRecalibrateTime/20 with no reset
+	if(eventGetActiveForMoreThan(&motionEvents[MTN_EVT_NO_MOTION_ALL],gyroRecalibrateTime/20) && \
+			motionEvents[MTN_EVT_NO_MOTION_ALL].counter >= motionEvents[MTN_EVT_NO_MOTION_ALL].threshold)
 	{
-		gyroAgXZLast=0;
-		gyroAgYZLast=0;
+		gyroAgXZLast=accAgXZ*1000;
+		gyroAgYZLast=accAgYZ*1000;
 	}
 
 	//Add the angles from gyro and accelerometer together in a complementary filter
 	//The division by 1000 because the time step is in ms, rather than s
 	int32_t agXZ = ((gyroAgWeight*gyroAgXZ)/1000 + (100-gyroAgWeight)*accAgXZ)/100;
 	int32_t agYZ = ((gyroAgWeight*gyroAgYZ)/1000 + (100-gyroAgWeight)*accAgYZ)/100;
-	 */
+
 	//Multiple angle by 10 to get a reasonable scale
-	int32_t agVals1[2];
-	agVals1[0]=10*accAgYZ;
-	agVals1[1]=10*accAgXZ;
-	uartSendCSV(agVals1,2,true);
+	int32_t agVals1[3];
+	int32_t agVals2[3];
+	agVals1[0]=10*accAgXZ;
+	agVals1[1]=10*gyroAgXZ/1000;
+	agVals1[2]=10*agXZ;
+	uartSendCSV(agVals1,3,false);
+	agVals2[0]=10*accAgYZ;
+	agVals2[1]=10*gyroAgYZ/1000;
+	agVals2[2]=10*agYZ;
+	uartSendCSV(agVals2,3,true);
 
 /*	uartSendKeyVal("accAgZX",accAgXZ,false);
 	uartSendKeyVal("accAgZY",accAgYZ,false);
@@ -474,9 +505,10 @@ void mpu6050CalculateEvents()
 	if(eventGetActiveForMoreThan(&motionEvents[MTN_EVT_NO_MOTION_ALL],gyroRecalibrateTime) && \
 			motionEvents[MTN_EVT_NO_MOTION_ALL].counter >= motionEvents[MTN_EVT_NO_MOTION_ALL].threshold)
 	{
-		mpu6050SetOffset(AXIS_ROLL,gyroVals.roll,true);
-		mpu6050SetOffset(AXIS_PITCH,gyroVals.pitch,true);
-		mpu6050SetOffset(AXIS_YAW,gyroVals.yaw,true);
+		eventSetTimerToNow(&motionEvents[MTN_EVT_NO_MOTION_ALL]);
+		mpu6050SetOffset(AXIS_ROLL,IMUVals[AXIS_ROLL],false);
+		mpu6050SetOffset(AXIS_PITCH,IMUVals[AXIS_PITCH],false);
+		mpu6050SetOffset(AXIS_YAW,IMUVals[AXIS_YAW],false);
 	}
 
 	//Update last values, when they have all been used
