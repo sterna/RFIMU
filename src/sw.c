@@ -8,6 +8,7 @@
 #include "sw.h"
 #include "time.h"
 #include "utils.h"
+#include "events.h"
 
 static bool getSwRaw(uint8_t sw);
 
@@ -20,7 +21,7 @@ typedef struct
 	uint32_t activationStartTime;	//Records the systemTime at which the switch had a rising edge
 }swState_t;
 
-static swState_t switches[SW_NOF_SWITCHES];
+static eventState_t switches[SW_NOF_SWITCHES];
 
 /*
  * Inits the ports for the switches
@@ -67,40 +68,7 @@ void swDebounceTask()
 		nextCallTime=systemTime+SW_DEBOUNCE_PERIOD;
 		for(uint8_t i=0;i<SW_NOF_SWITCHES;i++)
 		{
-			if(getSwRaw(i))
-			{
-				if(switches[i].counter<SW_DEBOUNCE_COUNTER_TOP)
-				{
-					switches[i].counter++;
-				}
-			}
-			else
-			{
-				if(switches[i].counter>0)
-				{
-					switches[i].counter--;
-				}
-			}
-			if(switches[i].counter>=SW_DEBOUNCE_COUNTER_TOP)
-			{
-				if(switches[i].active==false)
-				{
-					switches[i].risingEdgeActive = true;
-					switches[i].fallingEdgeActive = false;
-					switches[i].activationStartTime=systemTime;
-				}
-				switches[i].active=true;
-			}
-			else if(switches[i].counter==0)
-			{
-				if(switches[i].active==true)
-				{
-					switches[i].risingEdgeActive = false;
-					switches[i].fallingEdgeActive = true;
-					switches[i].activationStartTime=UINT32_MAX;
-				}
-				switches[i].active=false;
-			}
+			eventStateUpdate(&switches[i],getSwRaw(i));
 		}
 	}
 }

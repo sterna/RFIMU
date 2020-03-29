@@ -40,13 +40,14 @@
 #define MPU6050_ACC_X_H	59
 
 //Defines the index of axis
+//Note: I changed the pitch/roll axis, to better suit what I actually have in the board oriented
 enum
 {
 	AXIS_X=0,
 	AXIS_Y=1,
 	AXIS_Z=2,
-	AXIS_ROLL=3,
-	AXIS_PITCH=4,
+	AXIS_PITCH=3,
+	AXIS_ROLL=4,
 	AXIS_YAW=5,
 	AXIS_NOF=6,
 	AXIS_ALL=255
@@ -77,9 +78,21 @@ typedef struct{
 	int16_t yaw;
 }IMUVals_t;
 
+typedef struct{
+	int32_t accX;
+	int32_t accY;
+	int32_t accZ;
+}accVals_t;
+
+typedef struct{
+	int32_t roll;
+	int32_t yaw;
+	int32_t pitch;
+}gyroVals_t;
+
 void mpu6050Init();
 void mpu6050Process();
-void mpu6050SetOffset(uint8_t axis, int16_t val);
+void mpu6050SetOffset(uint8_t axis, int16_t val, bool isG);
 void mpu6050ResetAllOffsets();
 
 int16_t mpu6050GetValue(uint8_t axis,bool applyOffset);
@@ -91,10 +104,9 @@ int16_t mpu6050ConvertGtoAcc(int16_t mg);
 int16_t mpu6050ConvertGyroToDegS(int16_t val);
 int16_t mpu6050ConvertDegSToGyro(int16_t degs);
 
-uint32_t mpu6050GetMotionEvents();
+
 bool mpu6050MotionEventActive(motionEvent_t evt);
 
 void mpu6050TransmitRaw(bool csv);
-uint32_t calculateTotalForceVector(int32_t* val);
 
 #endif /* MPU6050_H_ */
