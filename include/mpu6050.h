@@ -46,8 +46,8 @@ enum
 	AXIS_X=0,
 	AXIS_Y=1,
 	AXIS_Z=2,
-	AXIS_PITCH=3,
-	AXIS_ROLL=4,
+	AXIS_ROLL=3,
+	AXIS_PITCH=4,
 	AXIS_YAW=5,
 	AXIS_NOF=6,
 	AXIS_ALL=255
@@ -90,6 +90,12 @@ typedef struct{
 	int32_t yaw;
 }gyroVals_t;
 
+typedef struct{
+	int32_t roll;
+	int32_t pitch;
+	int32_t yaw;
+}angles_t;
+
 void mpu6050Init();
 void mpu6050Process();
 void mpu6050SetOffset(uint8_t axis, int16_t val, bool isG);
@@ -105,8 +111,10 @@ int16_t mpu6050ConvertGyroToDegS(int16_t val);
 int16_t mpu6050ConvertDegSToGyro(int16_t degs);
 
 
+//Functions to get analysed data
 bool mpu6050MotionEventActive(motionEvent_t evt);
+void mpu6050GetAngles(angles_t* ag);
 
-void mpu6050TransmitRaw(bool csv);
+void mpu6050TransmitRaw(bool csv, bool newline);
 
 #endif /* MPU6050_H_ */

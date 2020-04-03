@@ -37,6 +37,8 @@ const int16_t IMUFactoryOffsets[AXIS_NOF]={-10,0,80,0,0,0};
 //Indicated which motion events are true. Motion events bits are defined in
 static eventState_t motionEvents[MTN_NOF_EVENTS];
 
+static angles_t agEst={0,0,0};
+
 //----------- Internal functions -------------//
 
 static void i2CReset();
@@ -85,6 +87,7 @@ void mpu6050Init()
 	}
 	motionEvents[MTN_EVT_NO_MOTION_ALL].threshold=5;
 	//Todo: Add settings for the rest of the motionEvents (if reasonable)
+
 }
 
 /*
@@ -105,9 +108,9 @@ void mpu6050ParseBuffer()
 	IMUVals[AXIS_Z]=(value + mpu6050ConvertGtoAcc(IMUFactoryOffsets[AXIS_Z])) * IMUAxisInversions[AXIS_Z];
 
 	value=(int16_t)((MPU6050RegisterBuffer[8]<<8)|MPU6050RegisterBuffer[9]);
-	IMUVals[AXIS_ROLL]=(value + mpu6050ConvertDegSToGyro(IMUFactoryOffsets[AXIS_ROLL])) * IMUAxisInversions[AXIS_ROLL];
-	value=(int16_t)((MPU6050RegisterBuffer[10]<<8)|MPU6050RegisterBuffer[11]);
 	IMUVals[AXIS_PITCH]=(value + mpu6050ConvertDegSToGyro(IMUFactoryOffsets[AXIS_PITCH])) * IMUAxisInversions[AXIS_PITCH];
+	value=(int16_t)((MPU6050RegisterBuffer[10]<<8)|MPU6050RegisterBuffer[11]);
+	IMUVals[AXIS_ROLL]=(value + mpu6050ConvertDegSToGyro(IMUFactoryOffsets[AXIS_ROLL])) * IMUAxisInversions[AXIS_ROLL];
 	value=(int16_t)((MPU6050RegisterBuffer[12]<<8)|MPU6050RegisterBuffer[13]);
 	IMUVals[AXIS_YAW]=(value + mpu6050ConvertDegSToGyro(IMUFactoryOffsets[AXIS_YAW])) * IMUAxisInversions[AXIS_YAW];
 
@@ -270,7 +273,7 @@ int16_t mpu6050ConvertDegSToGyro(int16_t degs)
 /*
  * Transmits all raw data currently in the input buffer
  */
-void mpu6050TransmitRaw(bool csv)
+void mpu6050TransmitRaw(bool csv, bool newline)
 {
 
 	IMUVals_t vals;
@@ -295,7 +298,7 @@ void mpu6050TransmitRaw(bool csv)
 		{
 			csvValsGyro[3]=500;
 		}
-		uartSendCSV(csvValsGyro,4,false);	//Todo: change back to true and to gyro
+		uartSendCSV(csvValsGyro,4,newline);
 	}
 	else
 	{
@@ -304,19 +307,24 @@ void mpu6050TransmitRaw(bool csv)
 		uartSendKeyVal("AccZ",mpu6050ConvertAccToG(vals.accZ),false);
 		uartSendKeyVal("Yaw",mpu6050ConvertGyroToDegS(vals.yaw),false);
 		uartSendKeyVal("Pitch",mpu6050ConvertGyroToDegS(vals.pitch),false);
-		uartSendKeyVal("Roll",mpu6050ConvertGyroToDegS(vals.roll),true);
+		uartSendKeyVal("Roll",mpu6050ConvertGyroToDegS(vals.roll),newline);
 	}
 }
 
-//The range for which we consider the device stationary for the acceleration
-static int16_t noMotionThresholdAcc=40;
-static int16_t noMotionThresholdGyro=15;
-//The shortest time needed for noMotionToBeValid
-//static uint32_t noMotionThresholdSamples=5;
+//Various filter parameters
+//Thresholds used to determine no-motion event
+const int16_t noMotionThresholdAcc=40;
+const int16_t noMotionThresholdGyro=15;
+//If the total accelerometer force vector is close to this value, the device is stationary (or moving veery slowly)
 const int32_t notMotionAcc=1000;
-static volatile int32_t gyroAgWeight=10;
+//The gyro weight for the complementary used for angle estimation
+const int32_t gyroAgWeight=80;
+//Times used for gyro re-calibration interval. Calibration happens if we have no-motion for these times.
+const uint32_t gyroRecalibrateTimeAg=1500;
 const uint32_t gyroRecalibrateTime=5000;
-volatile int32_t accNewWeight=30;
+
+//Constants for accelerometer LP-filter
+volatile int32_t accNewWeight=20;
 const int32_t accNewWeightMax=100;
 
 /*
@@ -328,15 +336,15 @@ void mpu6050CalculateEvents()
 
 	//Get data and calculate some basics
 
-	//Calculate the time difference from the last sample
+	//Calculate the time difference from the last sample. Time gating is done in the caller
 	static uint32_t lastCallTime=0;
-	//static uint32_t noMotionCounter=0;
 	static int32_t gyroAgXZLast=0;
 	static int32_t gyroAgYZLast=0;
 	static accVals_t accValsLP;		//Low-pass-filtered acceleration values
 	static accVals_t accValsLast;	//Acceleration vals in milliG from last iteration
 	static gyroVals_t gyroValsLast;	//Gyro vals in deg/s from last iteration
 
+	static uint32_t nextGyroCalibTimeForAg=0;
 	int32_t td=0;
 	IMUVals_t test;
 
@@ -404,7 +412,7 @@ void mpu6050CalculateEvents()
 	int16_t agZ =(int16_t)(acosf((float)accVals[AXIS_Z]/totalForceVector)*180.0/PI);*/
 	//Angle estimation based on acceleration reading
 
-	//Create trim accelerations to avoid weird edge-cases with atan
+	//Create trim accelerations to avoid weird edge-cases with atan and ignore strange angles
 	accVals_t accSafe;
 	accSafe.accX=accValsLP.accX;
 	accSafe.accY=accValsLP.accY;
@@ -424,7 +432,7 @@ void mpu6050CalculateEvents()
 	{
 		accSafe.accZ=smallestValueZ*utilSign(accVals.accZ);
 	}
-	//The angle towards the ground during tilt around the Y axis (left/right) TODO: Add round()
+	//The angle towards the ground during tilt around the Y axis (left/right)
 	int16_t accAgXZ = (int16_t)(roundf(atan2f((float)accSafe.accX,(float)accSafe.accZ)*180.0/PI));
 	if(abs(accAgXZ)>largestAngle)
 	{
@@ -443,15 +451,16 @@ void mpu6050CalculateEvents()
 
 
 	//The gyro angles are in milli deg (to avoid floating point and precision losses)
-	int32_t gyroAgXZ = gyroAgXZLast + td*(gyroVals.pitch+gyroValsLast.pitch)/2;
+	int32_t gyroAgXZ = gyroAgXZLast + td*(gyroVals.roll+gyroValsLast.roll)/2;
 	gyroAgXZLast=gyroAgXZ;
-	int32_t gyroAgYZ = gyroAgYZLast + td*(gyroVals.roll+gyroValsLast.roll)/2;
+	int32_t gyroAgYZ = gyroAgYZLast + td*(gyroVals.pitch+gyroValsLast.pitch)/2;
 	gyroAgYZLast=gyroAgYZ;
-	//Whenever we're not moving, 0 the last angle, to avoid strange buildup (the gyro is mostly good when moving)
-	//Todo: Rewrite the time trigger on this, since it will be always true after gyroRecalibrateTime/20 with no reset
-	if(eventGetActiveForMoreThan(&motionEvents[MTN_EVT_NO_MOTION_ALL],gyroRecalibrateTime/20) && \
-			motionEvents[MTN_EVT_NO_MOTION_ALL].counter >= motionEvents[MTN_EVT_NO_MOTION_ALL].threshold)
+	//Whenever we're not moving, set the last angle to whatever the accelerometer says the last angle, to avoid strange buildup (the gyro is mostly good when moving)
+	if(motionEvents[MTN_EVT_NO_MOTION_ALL].active && \
+			motionEvents[MTN_EVT_NO_MOTION_ALL].counter >= motionEvents[MTN_EVT_NO_MOTION_ALL].threshold && \
+			systemTime > nextGyroCalibTimeForAg)
 	{
+		nextGyroCalibTimeForAg=systemTime+gyroRecalibrateTimeAg;
 		gyroAgXZLast=accAgXZ*1000;
 		gyroAgYZLast=accAgYZ*1000;
 	}
@@ -460,9 +469,13 @@ void mpu6050CalculateEvents()
 	//The division by 1000 because the time step is in ms, rather than s
 	int32_t agXZ = ((gyroAgWeight*gyroAgXZ)/1000 + (100-gyroAgWeight)*accAgXZ)/100;
 	int32_t agYZ = ((gyroAgWeight*gyroAgYZ)/1000 + (100-gyroAgWeight)*accAgYZ)/100;
+	//Save angles to the state variable
+	agEst.roll=agXZ;
+	agEst.pitch=agYZ;
 
+	//Transmit angle data for debugging purposes
 	//Multiple angle by 10 to get a reasonable scale
-	int32_t agVals1[3];
+	/*int32_t agVals1[3];
 	int32_t agVals2[3];
 	agVals1[0]=10*accAgXZ;
 	agVals1[1]=10*gyroAgXZ/1000;
@@ -471,7 +484,7 @@ void mpu6050CalculateEvents()
 	agVals2[0]=10*accAgYZ;
 	agVals2[1]=10*gyroAgYZ/1000;
 	agVals2[2]=10*agYZ;
-	uartSendCSV(agVals2,3,true);
+	uartSendCSV(agVals2,3,true);*/
 
 /*	uartSendKeyVal("accAgZX",accAgXZ,false);
 	uartSendKeyVal("accAgZY",accAgYZ,false);
@@ -532,6 +545,17 @@ bool mpu6050MotionEventActive(motionEvent_t evt)
 	}
 	return (eventGetSate(&motionEvents[evt]));
 }
+
+/*
+ * Get the currently estimated angles
+ */
+void mpu6050GetAngles(angles_t* ag)
+{
+	ag->roll = agEst.roll;
+	ag->pitch = agEst.pitch;
+	ag->yaw = agEst.yaw;
+}
+
 
 //Call this function every 50ms or so, to start a measurement.
 void mpu6050Process()
