@@ -101,10 +101,10 @@ void mpu6050Process();
 void mpu6050SetOffset(uint8_t axis, int16_t val, bool isG);
 void mpu6050ResetAllOffsets();
 
-int16_t mpu6050GetValue(uint8_t axis,bool applyOffset);
+int16_t mpu6050GetValue(uint8_t axis,bool applyOffset, bool realUnits);
 int16_t mpu6050GetOffset(uint8_t axis);
-void mpu6050GetAllValues(int16_t* out, bool applyOffset);
-void mpu6050GetAllValuesStruct(IMUVals_t* out, bool applyOffset);
+void mpu6050GetAllValues(int16_t* out, bool applyOffset,bool realUnits);
+void mpu6050GetAllValuesStruct(IMUVals_t* out, bool applyOffset, bool realUnits);
 int16_t mpu6050ConvertAccToG(int16_t val);
 int16_t mpu6050ConvertGtoAcc(int16_t mg);
 int16_t mpu6050ConvertGyroToDegS(int16_t val);

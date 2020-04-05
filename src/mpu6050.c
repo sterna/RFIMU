@@ -37,7 +37,24 @@ const int16_t IMUFactoryOffsets[AXIS_NOF]={-10,0,80,0,0,0};
 //Indicated which motion events are true. Motion events bits are defined in
 static eventState_t motionEvents[MTN_NOF_EVENTS];
 
+//Handle a value ring buffer of all IMU data
+//Sample window length. The length in time of this data is IMU_BUFFER_LEN*MPU6050_PROCESS_PERIOD
+#define IMU_BUFFER_LEN	16
+#define IMU_BUFFER_TIME_LEN	(IMU_BUFFER_LEN*MPU6050_PROCESS_PERIOD)
+//Ringbuffer with IMU data
+static volatile IMUVals_t IMURingBuffer[IMU_BUFFER_LEN];
+//Index points to the where newest data is
+static volatile uint8_t IMURingBufIndex=0;
+//The max amplitude values for each axis in the current ring buffer. The values keep their sign.
+//Note that these are not necessarily (and most likely) not from the same sample
+static volatile IMUVals_t IMURingBufferMax;
+
+//Current angle estimation
 static angles_t agEst={0,0,0};
+
+//Counters for angle pulses
+static volatile uint32_t gyroImpulseSamplesPositive[3]={0,0,0};
+static volatile uint32_t gyroImpulseSamplesNegative[3]={0,0,0};
 
 //----------- Internal functions -------------//
 
@@ -50,6 +67,10 @@ static bool axisIsGyro(uint8_t axis);
 
 uint32_t calculateTotalForceVector(int32_t* val);
 uint32_t calculateTotalForceVectorStruct(accVals_t* vals);
+
+static void updateIMURingBuffer(IMUVals_t* newdata);
+void getLatestIMURingBufferData(IMUVals_t* data);
+void getIMURingBufferDataByIndex(IMUVals_t* data, uint8_t index, bool fromOldest);
 
 /*
  * Inits the onboard MPU6050
@@ -79,7 +100,11 @@ void mpu6050Init()
 	delay_us(500);
 	//Todo: Consider enabling the data read interrupt (Write bit0=1  in register 0x38). Don't bother the other sources
 	mpuIsInited=1;
+
 	mpu6050ResetAllOffsets();
+	//Clear the ring buffer
+	memset(IMURingBuffer,0,sizeof(IMUVals_t)*IMU_BUFFER_LEN);
+	memset(&IMURingBufferMax,0,sizeof(IMUVals_t));
 
 	for(uint8_t i=0;i<MTN_NOF_EVENTS;i++)
 	{
@@ -168,7 +193,7 @@ void mpu6050ResetAllOffsets()
  * If applyOffset is given as true, the current offset will be applied (subtracted)
  * Returns 0 if the axis does not exist
  */
-int16_t mpu6050GetValue(uint8_t axis,bool applyOffset)
+int16_t mpu6050GetValue(uint8_t axis,bool applyOffset, bool realUnits)
 {
 	int16_t tmpVal=0;
 	if(!isAxis(axis))
@@ -179,6 +204,17 @@ int16_t mpu6050GetValue(uint8_t axis,bool applyOffset)
 	if(applyOffset)
 	{
 		tmpVal-=IMUValOffsets[axis];
+	}
+	if(realUnits)
+	{
+		if(axisIsAcc(axis))
+		{
+			tmpVal=mpu6050ConvertAccToG(tmpVal);
+		}
+		else
+		{
+			tmpVal=mpu6050ConvertGyroToDegS(tmpVal);
+		}
 	}
 	return tmpVal;
 }
@@ -200,11 +236,11 @@ int16_t mpu6050GetOffset(uint8_t axis)
  * Puts all IMU values into the outbuffer. It's up to the caller to verify that the buffer is big enough
  * if applyOffset is given, offsets will be applied (subtracted)
  */
-void mpu6050GetAllValues(int16_t* out, bool applyOffset)
+void mpu6050GetAllValues(int16_t* out, bool applyOffset, bool realUnits)
 {
 	for(uint8_t i=0;i<AXIS_NOF;i++)
 	{
-		out[i]=mpu6050GetValue(i,applyOffset);
+		out[i]=mpu6050GetValue(i,applyOffset,realUnits);
 	}
 }
 
@@ -212,14 +248,14 @@ void mpu6050GetAllValues(int16_t* out, bool applyOffset)
  * Puts all IMU values into the outbuffer. It's up to the caller to verify that the buffer is big enough
  * if applyOffset is given, offsets will be applied (subtracted)
  */
-void mpu6050GetAllValuesStruct(IMUVals_t* out, bool applyOffset)
+void mpu6050GetAllValuesStruct(IMUVals_t* out, bool applyOffset, bool realUnits)
 {
-	out->accX=mpu6050GetValue(AXIS_X,applyOffset);
-	out->accY=mpu6050GetValue(AXIS_Y,applyOffset);
-	out->accZ=mpu6050GetValue(AXIS_Z,applyOffset);
-	out->roll=mpu6050GetValue(AXIS_ROLL,applyOffset);
-	out->pitch=mpu6050GetValue(AXIS_PITCH,applyOffset);
-	out->yaw=mpu6050GetValue(AXIS_YAW,applyOffset);
+	out->accX=mpu6050GetValue(AXIS_X,applyOffset,realUnits);
+	out->accY=mpu6050GetValue(AXIS_Y,applyOffset,realUnits);
+	out->accZ=mpu6050GetValue(AXIS_Z,applyOffset,realUnits);
+	out->roll=mpu6050GetValue(AXIS_ROLL,applyOffset,realUnits);
+	out->pitch=mpu6050GetValue(AXIS_PITCH,applyOffset,realUnits);
+	out->yaw=mpu6050GetValue(AXIS_YAW,applyOffset,realUnits);
 }
 
 /*
@@ -277,14 +313,19 @@ void mpu6050TransmitRaw(bool csv, bool newline)
 {
 
 	IMUVals_t vals;
-	mpu6050GetAllValuesStruct(&vals,true);
+	mpu6050GetAllValuesStruct(&vals,true,false);
 	if(csv)
 	{
 		int32_t csvValsAcc[5];
 		int32_t csvValsGyro[4];
-		csvValsAcc[0]=mpu6050ConvertAccToG(vals.accX);
+		/*csvValsAcc[0]=mpu6050ConvertAccToG(vals.accX);
 		csvValsAcc[1]=mpu6050ConvertAccToG(vals.accY);
 		csvValsAcc[2]=mpu6050ConvertAccToG(vals.accZ);
+		//csvValsAcc[3]=calculateTotalForceVector(csvValsAcc);
+		uartSendCSV(csvValsAcc,3,false);*/
+		csvValsAcc[0]=50*(gyroImpulseSamplesPositive[0]-gyroImpulseSamplesNegative[0]);
+		csvValsAcc[1]=50*(gyroImpulseSamplesPositive[1]-gyroImpulseSamplesNegative[1]);
+		csvValsAcc[2]=50*(gyroImpulseSamplesPositive[2]-gyroImpulseSamplesNegative[2]);
 		//csvValsAcc[3]=calculateTotalForceVector(csvValsAcc);
 		uartSendCSV(csvValsAcc,3,false);
 		csvValsGyro[0]=mpu6050ConvertGyroToDegS(vals.roll);
@@ -346,7 +387,6 @@ void mpu6050CalculateEvents()
 
 	static uint32_t nextGyroCalibTimeForAg=0;
 	int32_t td=0;
-	IMUVals_t test;
 
 	//Current acc vals
 	accVals_t accVals;			//Acceleration vals in milliG.
@@ -369,21 +409,26 @@ void mpu6050CalculateEvents()
 	td=systemTime-lastCallTime;
 	lastCallTime=systemTime;
 
-	//Includes offset
-	mpu6050GetAllValuesStruct(&test,true);
 
-	accVals.accX=(int32_t)mpu6050ConvertAccToG(test.accX);
-	accVals.accY=(int32_t)mpu6050ConvertAccToG(test.accY);
-	accVals.accZ=(int32_t)mpu6050ConvertAccToG(test.accZ);
+	{
+		IMUVals_t tmp;
+		//Includes offset
+		getLatestIMURingBufferData(&tmp);
+		//mpu6050GetAllValuesStruct(&test,true);
+		mpu6050TransmitRaw(true,true);
 
-	accValsLP.accX = (accVals.accX*accNewWeight + (accNewWeightMax-accNewWeight)*accValsLP.accX) / accNewWeightMax;
-	accValsLP.accY = (accVals.accY*accNewWeight + (accNewWeightMax-accNewWeight)*accValsLP.accY) / accNewWeightMax;
-	accValsLP.accZ = (accVals.accZ*accNewWeight + (accNewWeightMax-accNewWeight)*accValsLP.accZ) / accNewWeightMax;
+		accVals.accX=(int32_t)tmp.accX;
+		accVals.accY=(int32_t)tmp.accY;
+		accVals.accZ=(int32_t)tmp.accZ;
 
-	gyroVals.roll=(int32_t)mpu6050ConvertGyroToDegS(test.roll);
-	gyroVals.yaw=(int32_t)mpu6050ConvertGyroToDegS(test.yaw);
-	gyroVals.pitch=(int32_t)mpu6050ConvertGyroToDegS(test.pitch);
+		accValsLP.accX = (accVals.accX*accNewWeight + (accNewWeightMax-accNewWeight)*accValsLP.accX) / accNewWeightMax;
+		accValsLP.accY = (accVals.accY*accNewWeight + (accNewWeightMax-accNewWeight)*accValsLP.accY) / accNewWeightMax;
+		accValsLP.accZ = (accVals.accZ*accNewWeight + (accNewWeightMax-accNewWeight)*accValsLP.accZ) / accNewWeightMax;
 
+		gyroVals.roll=(int32_t)tmp.roll;
+		gyroVals.yaw=(int32_t)tmp.yaw;
+		gyroVals.pitch=(int32_t)tmp.pitch;
+	}
 	//mpu6050TransmitRaw(true);
 	int32_t totalAccVector=calculateTotalForceVectorStruct(&accVals);
 	//uartSendKeyVal("Vect",totalAccVector,true);
@@ -401,25 +446,20 @@ void mpu6050CalculateEvents()
 	eventStateUpdate(&motionEvents[MTN_EVT_NO_MOTION_ALL],noMotionState);
 
 	/*
-	 * Todo: Estimate angle relative to ground plane
-	 * http://www.instructables.com/id/Accelerometer-Gyro-Tutorial/
-	 * Also add a reset functions (maybe based on the offset already used in some way?)
+	 * Estimate angle relative to ground plane
+	 * Only roll (XZ) and roll pitch (YZ) angles are estimated, as yaw angle (XY) is tricky to estimate, since there's no acceleration info
 	 */
 
-	//Calculate the angle of each axis against the force vector (in deg). I don't think these are needed
-	/*int16_t agX =(int16_t)(acosf((float)accVals[AXIS_X]/totalForceVector)*180.0/PI);
-	int16_t agY =(int16_t)(acosf((float)accVals[AXIS_Y]/totalForceVector)*180.0/PI);
-	int16_t agZ =(int16_t)(acosf((float)accVals[AXIS_Z]/totalForceVector)*180.0/PI);*/
 	//Angle estimation based on acceleration reading
-
 	//Create trim accelerations to avoid weird edge-cases with atan and ignore strange angles
 	accVals_t accSafe;
 	accSafe.accX=accValsLP.accX;
 	accSafe.accY=accValsLP.accY;
 	accSafe.accZ=accValsLP.accZ;
-	static volatile int16_t smallestValueXY=150;
-	static volatile int16_t smallestValueZ=30;
-	static volatile int16_t largestAngle=150;
+	//Todo: Might want to trim these more later
+	const int16_t smallestValueXY=150;
+	const int16_t smallestValueZ=30;
+	const int16_t largestAngle=150;
 	if(abs(accVals.accX) < smallestValueXY && (abs(accVals.accY) > (notMotionAcc-smallestValueXY)))
 	{
 		accSafe.accX=0;
@@ -444,12 +484,8 @@ void mpu6050CalculateEvents()
 	{
 		accAgYZ=0;
 	}
-	//int16_t agFrontBack = agZ*utilSign(accVals[AXIS_Y]);
 
-
-	//Using Gyro to get the angle is almost completely worthless!!! It just doesn't work at all!
-
-
+	//Calculate angles based on gyro
 	//The gyro angles are in milli deg (to avoid floating point and precision losses)
 	int32_t gyroAgXZ = gyroAgXZLast + td*(gyroVals.roll+gyroValsLast.roll)/2;
 	gyroAgXZLast=gyroAgXZ;
@@ -486,18 +522,177 @@ void mpu6050CalculateEvents()
 	agVals2[2]=10*agYZ;
 	uartSendCSV(agVals2,3,true);*/
 
-/*	uartSendKeyVal("accAgZX",accAgXZ,false);
-	uartSendKeyVal("accAgZY",accAgYZ,false);
-	uartSendKeyVal("gyrAgZX",gyroAgXZ/1000,false);
-	uartSendKeyVal("gyrAgZY",gyroAgYZ/1000,false);
-	uartSendKeyVal("agZX",agXZ,false);
-	uartSendKeyVal("agZY",agYZ,true);*/
-
-
 	/*
-	 * Todo: Estimate impulse (like a clap or stomp). Look for a sudden peak in any acc data
+	 * Todo: Estimate impulse (like a clap, stomp, or quick tilt).
+	 * Two types of impluses:
+	 * 	Angle impulse (based on gyro)
+	 * 	Hit impulse, based on acc or something
+	 *
+	 * An angle pulse has the following characteristics:
+	 * A short (maybe <300ms) increase in gyro in that direction, followed by a smaller, opposite direction pulse (when I turn my hand back)
+	 * Detection params:
+	 * - Max amplitude
+	 * - Half amplitude
+	 * - FWHM (length of pulse at half amplitude)
+	 * If the max amplitude is large enough, and the FWHM is within a defined window (a "lagom" long pulse), we have a pulse
+	 * Store a sample core of a number of samples (could be useful for other things too)
+	 * - Hold-off time afterwards
 	 */
+	static volatile bool gyroImpulseActive[3]={false,false,false};
+	static uint32_t gyroPulseNextAnalyzeTime=0;
+	//Todo: Make const
+	static volatile uint32_t gyroPulseHoldoffTime=500;
+	//The max gyro amplitude must be above this threshold
+	static volatile int32_t gyroThrehsoldAmplitude=250;
+	//The FWHM times must be between these times (in ms)
+	static volatile uint32_t FWHM_minTime=70;
+	static volatile uint32_t FWHM_maxTime=300;
+	static volatile uint32_t minSamplesBefore=2;
+	static volatile uint32_t minSamplesAfter=1;
 
+	//Only perform analysis when we have not recently found a pulse
+	if(systemTime>gyroPulseNextAnalyzeTime)
+	{
+		gyroImpulseActive[0]=false;
+		gyroImpulseActive[1]=false;
+		gyroImpulseActive[2]=false;
+
+		volatile uint32_t FWHM_minSamples=0;
+		volatile uint32_t FWHM_maxSamples=0;
+		//Calculate the number of samples that shall have this
+		FWHM_minSamples=FWHM_minTime/MPU6050_PROCESS_PERIOD;
+		FWHM_maxSamples=FWHM_maxTime/MPU6050_PROCESS_PERIOD;
+
+
+		int32_t maxSample[3]={0,0,0};
+		maxSample[0]=IMURingBufferMax.roll;
+		maxSample[1]=IMURingBufferMax.pitch;
+		maxSample[2]=IMURingBufferMax.yaw;
+		//Check if any amplitude is greater than the threshold exist, before wasting time looking it (because we already know this)
+		if(utilMax(abs(maxSample[0]),utilMax(abs(maxSample[1]),abs(maxSample[2])))>gyroThrehsoldAmplitude)
+		{
+			int32_t halfMaxVals[3]={0,0,0};
+			halfMaxVals[0]=maxSample[0]/2;
+			halfMaxVals[1]=maxSample[1]/2;
+			halfMaxVals[2]=maxSample[2]/2;
+			//Go through the whole sample window to look for a match
+			//uint8_t bufInd=IMURingBufIndex;
+			IMUVals_t tmpData;
+			uint8_t FWHMSamplesAbove[3]={0,0,0};
+			uint8_t FWHMSamplesBelowBefore[3]={0,0,0};
+			uint8_t FWHMSamplesBelowAfter[3]={0,0,0};
+			//Pulse state, 0=before, 1=during, 2=after
+			uint8_t pulseState[3]={0,0,0};
+			int16_t gyroValsTmp[3]={0,0,0};
+			for(uint8_t i=0;i<IMU_BUFFER_LEN;i++)
+			{
+				//Get next data
+				getIMURingBufferDataByIndex(&tmpData,i,true);
+				gyroValsTmp[0]=tmpData.roll;
+				gyroValsTmp[1]=tmpData.pitch;
+				gyroValsTmp[2]=tmpData.yaw;
+				for(uint8_t axis=0;axis<3;axis++)
+				{
+					//Todo: Go through axis by axis and do all the updates, comparisons and stuff
+					//Check if the current sample is above the Half maximum and if they are the same direction
+					if((abs(maxSample[axis])>gyroThrehsoldAmplitude) &&
+							(utilSign(gyroValsTmp[axis])==utilSign(halfMaxVals[axis])))
+					{
+						bool aboveHM=false;
+						if((abs(gyroValsTmp[axis]) > abs(halfMaxVals[axis])))
+						{
+							aboveHM=true;
+						}
+						switch(pulseState[axis])
+						{
+							case 0:	//Before
+								if(aboveHM)
+								{
+									FWHMSamplesAbove[axis]++;
+									if(FWHMSamplesAbove[axis]>FWHM_minSamples)
+									{
+										pulseState[axis]=1;
+									}
+								}
+								else
+								{
+									FWHMSamplesBelowBefore[axis]++;
+								}
+								break;
+							case 1:	//During
+								if(aboveHM)
+								{
+									FWHMSamplesAbove[axis]++;
+								}
+								else
+								{
+									FWHMSamplesBelowAfter[axis]++;
+									if(FWHMSamplesBelowAfter[axis]>=minSamplesAfter)
+									{
+										pulseState[axis]=2;
+									}
+								}
+								break;
+							case 2:	//After
+								if(aboveHM)
+								{
+									FWHMSamplesAbove[axis]++;
+								}
+								else
+								{
+									FWHMSamplesBelowAfter[axis]++;
+								}
+								break;
+						}
+						/*
+						if((abs(gyroValsTmp[axis]) > abs(halfMaxVals[axis])))
+						{
+							FWHMSamplesAbove[axis]++;
+							if(FWHMSamplesAbove[axis]>FWHM_minSamples)
+							{
+								beforePulse[axis]=false;
+							}
+						}
+						else if (beforePulse[axis])
+						{
+							FWHMSamplesBelowBefore[axis]++;
+						}
+						else if (!beforePulse[axis])
+						{
+							FWHMSamplesBelowAfter[axis]++;
+						}*/
+					}
+				}
+			}
+			//Now, we have checked all samples in window and picked out the number of samples that are above the threshold
+			for(uint8_t axis=0;axis<3;axis++)
+			{
+				if(pulseState[axis]>=2)
+				{
+					if((FWHMSamplesAbove[axis]>=FWHM_minSamples && FWHMSamplesAbove[axis]<=FWHM_maxSamples) &&
+						(FWHMSamplesBelowBefore[axis]>=minSamplesBefore && FWHMSamplesBelowAfter[axis]>=minSamplesAfter))
+					{
+						gyroImpulseActive[axis]=true;
+						if(utilSign(halfMaxVals[axis])==1)
+						{
+							gyroImpulseSamplesPositive[axis]++;
+						}
+						else
+						{
+							gyroImpulseSamplesNegative[axis]++;
+						}
+						gyroPulseNextAnalyzeTime=systemTime+gyroPulseHoldoffTime;
+
+					}
+					else
+					{
+						gyroImpulseActive[axis]=false;
+					}
+				}
+			}
+
+		}
+	}
 	/*
 	 *	Todo: Implement gesture/sequence recording and recognition
 	 *	This will most likely not work well...
@@ -573,8 +768,13 @@ void mpu6050Process()
 				MPU6050Busy=1;
 				I2C_GenerateSTART(I2C1,ENABLE);
 			}
-			//Transmit all the values through UART
+			//Update ring buffer with new data
+			IMUVals_t tmp;
+			mpu6050GetAllValuesStruct(&tmp,true,true);
+			updateIMURingBuffer(&tmp);
+			//Do all the signal processing stuff
 			mpu6050CalculateEvents();
+			//Transmit all the values through UART
 			//mpu6050TransmitRaw(true);
 
 		}
@@ -588,6 +788,9 @@ void mpu6050Process()
 
 // ---------------- Internal functions --------------- //
 
+/*
+ * A version to calculate the total force vector using a struct
+ */
 uint32_t calculateTotalForceVectorStruct(accVals_t* vals)
 {
 	int32_t tmp[3];
@@ -600,7 +803,6 @@ uint32_t calculateTotalForceVectorStruct(accVals_t* vals)
 /*
  * Calculate the total inertial vector (R^2=Rx^2+Ry^2+Rz^2)
  * Result will be in whatever unit the input data is
- * COuld be used for a no-mowing threshold
  */
 uint32_t calculateTotalForceVector(int32_t* val)
 {
@@ -608,6 +810,123 @@ uint32_t calculateTotalForceVector(int32_t* val)
 	return utilSqrtI2I((uint32_t)totalVal);
 
 }
+
+/*
+ * Updates the ring buffer with new values
+ * Purely dependent on the current state
+ */
+static void updateIMURingBuffer(IMUVals_t* newdata)
+{
+	IMURingBufIndex=utilIncLoopSimple(IMURingBufIndex,IMU_BUFFER_LEN-1);
+	memcpy(&IMURingBuffer[IMURingBufIndex],newdata,sizeof(IMUVals_t));
+
+	//Update max amplitude values for each axis
+	//Make sure to reset all values before going through
+	memset(&IMURingBufferMax,0,sizeof(IMUVals));
+	for(uint8_t i=0; i<IMU_BUFFER_LEN;i++)
+	{
+		if(abs(IMURingBuffer[i].accX)>abs(IMURingBufferMax.accX))
+		{
+			IMURingBufferMax.accX=IMURingBuffer[i].accX;
+		}
+		if(abs(IMURingBuffer[i].accY)>abs(IMURingBufferMax.accY))
+		{
+			IMURingBufferMax.accY=IMURingBuffer[i].accY;
+		}
+		if(abs(IMURingBuffer[i].accZ)>abs(IMURingBufferMax.accZ))
+		{
+			IMURingBufferMax.accZ=IMURingBuffer[i].accZ;
+		}
+		if(abs(IMURingBuffer[i].roll)>abs(IMURingBufferMax.roll))
+		{
+			IMURingBufferMax.roll=IMURingBuffer[i].roll;
+		}
+		if(abs(IMURingBuffer[i].pitch)>abs(IMURingBufferMax.pitch))
+		{
+			IMURingBufferMax.pitch=IMURingBuffer[i].pitch;
+		}
+		if(abs(IMURingBuffer[i].yaw)>abs(IMURingBufferMax.yaw))
+		{
+			IMURingBufferMax.yaw=IMURingBuffer[i].yaw;
+		}
+	}
+}
+
+/*
+ * Returns the latest data in the ring buffer
+ */
+void getLatestIMURingBufferData(IMUVals_t* data)
+{
+	getIMURingBufferDataByIndex(data,0,false);
+}
+
+/*
+ * Returns the data from the IMU ring buffer
+ * If fromOldest is given, index is in order from oldest data to newest data. Otherwise, it's in reverse
+ */
+void getIMURingBufferDataByIndex(IMUVals_t* data, uint8_t index, bool fromOldest)
+{
+	uint8_t tmpIndex=0;
+	int8_t direction=1;
+	if(!fromOldest)
+	{
+		direction=-1;
+	}
+	else
+	{
+		index=utilIncLoopSimple(index,IMU_BUFFER_LEN-1);
+	}
+	//Find right index:
+	tmpIndex=utilIncWithDir(IMURingBufIndex,direction,index,0,IMU_BUFFER_LEN-1);
+	memcpy(data,&IMURingBuffer[tmpIndex],sizeof(IMUVals_t));
+}
+
+/*
+ * Checks if an axis actually is an axis
+ */
+static inline bool isAxis(uint8_t axis)
+{
+	if(axis<AXIS_NOF || axis == AXIS_ALL)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+/*
+ * Checks if the axis is an accelerometer axis
+ */
+static bool axisIsAcc(uint8_t axis)
+{
+	if(axis== AXIS_X || axis == AXIS_Y || axis==AXIS_Z)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+/*
+ * Checks if the axis is a fyro axis
+ */
+static bool axisIsGyro(uint8_t axis)
+{
+	if(axis==AXIS_ROLL || axis==AXIS_PITCH || axis==AXIS_YAW)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+//----------- I2C handling functions ------------------//
 
 static void i2cInitHw()
 {
@@ -683,42 +1002,6 @@ static void i2CReset()
 	I2C_ITConfig(I2C1,I2C_IT_EVT | I2C_IT_BUF,DISABLE);
 	I2C_Cmd(I2C1,DISABLE);
 	i2cInitHw();
-}
-
-static inline bool isAxis(uint8_t axis)
-{
-	if(axis<AXIS_NOF || axis == AXIS_ALL)
-	{
-		return true;
-	}
-	else
-	{
-		return false;
-	}
-}
-
-static bool axisIsAcc(uint8_t axis)
-{
-	if(axis== AXIS_X || axis == AXIS_Y || axis==AXIS_Z)
-	{
-		return true;
-	}
-	else
-	{
-		return false;
-	}
-}
-
-static bool axisIsGyro(uint8_t axis)
-{
-	if(axis==AXIS_ROLL || axis==AXIS_PITCH || axis==AXIS_YAW)
-	{
-		return true;
-	}
-	else
-	{
-		return false;
-	}
 }
 
 
