@@ -55,6 +55,7 @@ static angles_t agEst={0,0,0};
 //Counters for angle pulses
 static volatile uint32_t gyroImpulseSamplesPositive[3]={0,0,0};
 static volatile uint32_t gyroImpulseSamplesNegative[3]={0,0,0};
+static volatile uint32_t accImpulsePulseCount=0;
 
 //----------- Internal functions -------------//
 
@@ -68,7 +69,7 @@ static bool axisIsGyro(uint8_t axis);
 uint32_t calculateTotalForceVector(int32_t* val);
 uint32_t calculateTotalForceVectorStruct(accVals_t* vals);
 
-static void updateIMURingBuffer(IMUVals_t* newdata);
+static void updateIMURingBuffer(IMUVals_t* newdata, bool findMax);
 void getLatestIMURingBufferData(IMUVals_t* data);
 void getIMURingBufferDataByIndex(IMUVals_t* data, uint8_t index, bool fromOldest);
 
@@ -318,16 +319,16 @@ void mpu6050TransmitRaw(bool csv, bool newline)
 	{
 		int32_t csvValsAcc[5];
 		int32_t csvValsGyro[4];
-		/*csvValsAcc[0]=mpu6050ConvertAccToG(vals.accX);
+		csvValsAcc[0]=mpu6050ConvertAccToG(vals.accX);
 		csvValsAcc[1]=mpu6050ConvertAccToG(vals.accY);
 		csvValsAcc[2]=mpu6050ConvertAccToG(vals.accZ);
-		//csvValsAcc[3]=calculateTotalForceVector(csvValsAcc);
-		uartSendCSV(csvValsAcc,3,false);*/
-		csvValsAcc[0]=50*(gyroImpulseSamplesPositive[0]-gyroImpulseSamplesNegative[0]);
+		csvValsAcc[3]=50*accImpulsePulseCount;
+		uartSendCSV(csvValsAcc,4,newline);	//todo: remove newline here
+		/*csvValsAcc[0]=50*(gyroImpulseSamplesPositive[0]-gyroImpulseSamplesNegative[0]);
 		csvValsAcc[1]=50*(gyroImpulseSamplesPositive[1]-gyroImpulseSamplesNegative[1]);
-		csvValsAcc[2]=50*(gyroImpulseSamplesPositive[2]-gyroImpulseSamplesNegative[2]);
+		csvValsAcc[2]=50*(gyroImpulseSamplesPositive[2]-gyroImpulseSamplesNegative[2]);*/
 		//csvValsAcc[3]=calculateTotalForceVector(csvValsAcc);
-		uartSendCSV(csvValsAcc,3,false);
+		//uartSendCSV(csvValsAcc,3,false);
 		csvValsGyro[0]=mpu6050ConvertGyroToDegS(vals.roll);
 		csvValsGyro[1]=mpu6050ConvertGyroToDegS(vals.pitch);
 		csvValsGyro[2]=mpu6050ConvertGyroToDegS(vals.yaw);
@@ -339,7 +340,7 @@ void mpu6050TransmitRaw(bool csv, bool newline)
 		{
 			csvValsGyro[3]=500;
 		}
-		uartSendCSV(csvValsGyro,4,newline);
+		//uartSendCSV(csvValsGyro,4,newline);
 	}
 	else
 	{
@@ -415,7 +416,7 @@ void mpu6050CalculateEvents()
 		//Includes offset
 		getLatestIMURingBufferData(&tmp);
 		//mpu6050GetAllValuesStruct(&test,true);
-		mpu6050TransmitRaw(true,true);
+		//mpu6050TransmitRaw(true,true);
 
 		accVals.accX=(int32_t)tmp.accX;
 		accVals.accY=(int32_t)tmp.accY;
@@ -525,7 +526,7 @@ void mpu6050CalculateEvents()
 	/*
 	 * Todo: Estimate impulse (like a clap, stomp, or quick tilt).
 	 * Two types of impluses:
-	 * 	Angle impulse (based on gyro)
+	 * 	Angle impulse (based on gyro) - Didn't work well, and is not very useful. Angle estimation + time gate will solve this input
 	 * 	Hit impulse, based on acc or something
 	 *
 	 * An angle pulse has the following characteristics:
@@ -537,17 +538,28 @@ void mpu6050CalculateEvents()
 	 * If the max amplitude is large enough, and the FWHM is within a defined window (a "lagom" long pulse), we have a pulse
 	 * Store a sample core of a number of samples (could be useful for other things too)
 	 * - Hold-off time afterwards
+	 *
+	 *
+	 * Hit impulse
+	 * Use the same method as the angle impulse with these parameters:
+	 * - High acc amplitude on any axis. (High as in above 1500mG or so)
+	 * - Very short pulse (from 1 to 3 samples or something)
+	 * - Shorter holdoff (say 200ms or so)
+	 *
+	 *
+	 * New plan: Find which sample is the max sample. Analyse the other samples beside that sample for more information (go X samples before and X samples after)
+	 *
 	 */
 	static volatile bool gyroImpulseActive[3]={false,false,false};
 	static uint32_t gyroPulseNextAnalyzeTime=0;
 	//Todo: Make const
-	static volatile uint32_t gyroPulseHoldoffTime=500;
+	static volatile uint32_t gyroPulseHoldoffTime=150;
 	//The max gyro amplitude must be above this threshold
-	static volatile int32_t gyroThrehsoldAmplitude=250;
+	static volatile int32_t gyroThrehsoldAmplitude=2250;
 	//The FWHM times must be between these times (in ms)
-	static volatile uint32_t FWHM_minTime=70;
-	static volatile uint32_t FWHM_maxTime=300;
-	static volatile uint32_t minSamplesBefore=2;
+	static volatile uint32_t FWHM_minTime=10;
+	static volatile uint32_t FWHM_maxTime=40;
+	static volatile uint32_t minSamplesBefore=1;
 	static volatile uint32_t minSamplesAfter=1;
 
 	//Only perform analysis when we have not recently found a pulse
@@ -557,17 +569,20 @@ void mpu6050CalculateEvents()
 		gyroImpulseActive[1]=false;
 		gyroImpulseActive[2]=false;
 
-		volatile uint32_t FWHM_minSamples=0;
-		volatile uint32_t FWHM_maxSamples=0;
+		volatile uint32_t FWHM_minSamples=2;
+		volatile uint32_t FWHM_maxSamples=2;
 		//Calculate the number of samples that shall have this
-		FWHM_minSamples=FWHM_minTime/MPU6050_PROCESS_PERIOD;
-		FWHM_maxSamples=FWHM_maxTime/MPU6050_PROCESS_PERIOD;
+		FWHM_minSamples=FWHM_minTime/MPU6050_SAMPLE_PERIOD;
+		FWHM_maxSamples=FWHM_maxTime/MPU6050_SAMPLE_PERIOD;
 
 
 		int32_t maxSample[3]={0,0,0};
-		maxSample[0]=IMURingBufferMax.roll;
-		maxSample[1]=IMURingBufferMax.pitch;
-		maxSample[2]=IMURingBufferMax.yaw;
+		maxSample[0]=IMURingBufferMax.accX;
+		maxSample[1]=IMURingBufferMax.accY;
+		maxSample[2]=IMURingBufferMax.accZ;
+		//maxSample[0]=IMURingBufferMax.roll;
+		//maxSample[1]=IMURingBufferMax.pitch;
+		//maxSample[2]=IMURingBufferMax.yaw;
 		//Check if any amplitude is greater than the threshold exist, before wasting time looking it (because we already know this)
 		if(utilMax(abs(maxSample[0]),utilMax(abs(maxSample[1]),abs(maxSample[2])))>gyroThrehsoldAmplitude)
 		{
@@ -588,18 +603,22 @@ void mpu6050CalculateEvents()
 			{
 				//Get next data
 				getIMURingBufferDataByIndex(&tmpData,i,true);
-				gyroValsTmp[0]=tmpData.roll;
-				gyroValsTmp[1]=tmpData.pitch;
-				gyroValsTmp[2]=tmpData.yaw;
+				gyroValsTmp[0]=tmpData.accX;
+				gyroValsTmp[1]=tmpData.accY;
+				gyroValsTmp[2]=tmpData.accZ;
+				//gyroValsTmp[0]=tmpData.roll;
+				//gyroValsTmp[1]=tmpData.pitch;
+				//gyroValsTmp[2]=tmpData.yaw;
 				for(uint8_t axis=0;axis<3;axis++)
 				{
 					//Todo: Go through axis by axis and do all the updates, comparisons and stuff
 					//Check if the current sample is above the Half maximum and if they are the same direction
-					if((abs(maxSample[axis])>gyroThrehsoldAmplitude) &&
-							(utilSign(gyroValsTmp[axis])==utilSign(halfMaxVals[axis])))
+					if(pulseState[axis]<3 &&
+						(abs(maxSample[axis])>gyroThrehsoldAmplitude))
 					{
 						bool aboveHM=false;
-						if((abs(gyroValsTmp[axis]) > abs(halfMaxVals[axis])))
+						if((abs(gyroValsTmp[axis]) > abs(halfMaxVals[axis])) &&
+								(utilSign(gyroValsTmp[axis])==utilSign(halfMaxVals[axis])))
 						{
 							aboveHM=true;
 						}
@@ -609,7 +628,7 @@ void mpu6050CalculateEvents()
 								if(aboveHM)
 								{
 									FWHMSamplesAbove[axis]++;
-									if(FWHMSamplesAbove[axis]>FWHM_minSamples)
+									if(FWHMSamplesAbove[axis]>=FWHM_minSamples)
 									{
 										pulseState[axis]=1;
 									}
@@ -626,11 +645,8 @@ void mpu6050CalculateEvents()
 								}
 								else
 								{
-									FWHMSamplesBelowAfter[axis]++;
-									if(FWHMSamplesBelowAfter[axis]>=minSamplesAfter)
-									{
-										pulseState[axis]=2;
-									}
+									//We now went under, which should not happen during a pulse (no LP-filter here!). End of pulse.
+									pulseState[axis]=2;
 								}
 								break;
 							case 2:	//After
@@ -641,6 +657,11 @@ void mpu6050CalculateEvents()
 								else
 								{
 									FWHMSamplesBelowAfter[axis]++;
+									//Stop analysis as soon as we have gone over the number of pulses below HM.
+									if(FWHMSamplesBelowAfter[axis]>=minSamplesAfter)
+									{
+										pulseState[axis]=3;
+									}
 								}
 								break;
 						}
@@ -664,23 +685,27 @@ void mpu6050CalculateEvents()
 					}
 				}
 			}
+			bool pulseFound=false;
 			//Now, we have checked all samples in window and picked out the number of samples that are above the threshold
 			for(uint8_t axis=0;axis<3;axis++)
 			{
-				if(pulseState[axis]>=2)
+				if(!pulseFound && pulseState[axis]>=3)
 				{
 					if((FWHMSamplesAbove[axis]>=FWHM_minSamples && FWHMSamplesAbove[axis]<=FWHM_maxSamples) &&
 						(FWHMSamplesBelowBefore[axis]>=minSamplesBefore && FWHMSamplesBelowAfter[axis]>=minSamplesAfter))
 					{
 						gyroImpulseActive[axis]=true;
-						if(utilSign(halfMaxVals[axis])==1)
+						gyroImpulseSamplesPositive[axis]++;
+						accImpulsePulseCount++;
+						pulseFound=true;
+						/*if(utilSign(halfMaxVals[axis])==1)
 						{
 							gyroImpulseSamplesPositive[axis]++;
 						}
 						else
 						{
 							gyroImpulseSamplesNegative[axis]++;
-						}
+						}*/
 						gyroPulseNextAnalyzeTime=systemTime+gyroPulseHoldoffTime;
 
 					}
@@ -704,7 +729,7 @@ void mpu6050CalculateEvents()
 	 *	Detection:
 	 *	1. Perform the same sampling
 	 *	2. Compare, at each sample, the current sample to all existing recordings.
-	 *	Allow for a successcount for each recording, and ignore recordings that are not possible to match
+	 *	Allow for a success count for each recording, and ignore recordings that are not possible to match
 	 */
 
 
@@ -757,9 +782,10 @@ void mpu6050Process()
 {
 	static uint32_t nextCallTime=0;
 	static uint32_t nextSendTime=0;
+	static uint8_t processCounter=0;
 	if(nextCallTime<systemTime)
 	{
-		nextCallTime=systemTime+MPU6050_PROCESS_PERIOD;
+		nextCallTime=systemTime+MPU6050_SAMPLE_PERIOD;
 		if(mpuIsInited)
 		{
 			if(!MPU6050Busy)
@@ -768,14 +794,24 @@ void mpu6050Process()
 				MPU6050Busy=1;
 				I2C_GenerateSTART(I2C1,ENABLE);
 			}
+			bool calculate=false;
+			processCounter++;
+			if(processCounter>=(MPU6050_PROCESS_PERIOD/MPU6050_SAMPLE_PERIOD))
+			{
+				calculate=true;
+				processCounter=0;
+			}
 			//Update ring buffer with new data
 			IMUVals_t tmp;
 			mpu6050GetAllValuesStruct(&tmp,true,true);
-			updateIMURingBuffer(&tmp);
+			updateIMURingBuffer(&tmp,calculate);
 			//Do all the signal processing stuff
-			mpu6050CalculateEvents();
+			if(calculate)
+			{
+				mpu6050CalculateEvents();
+			}
 			//Transmit all the values through UART
-			//mpu6050TransmitRaw(true);
+			mpu6050TransmitRaw(true,true);
 
 		}
 	}
@@ -815,13 +851,17 @@ uint32_t calculateTotalForceVector(int32_t* val)
  * Updates the ring buffer with new values
  * Purely dependent on the current state
  */
-static void updateIMURingBuffer(IMUVals_t* newdata)
+static void updateIMURingBuffer(IMUVals_t* newdata, bool findMax)
 {
 	IMURingBufIndex=utilIncLoopSimple(IMURingBufIndex,IMU_BUFFER_LEN-1);
 	memcpy(&IMURingBuffer[IMURingBufIndex],newdata,sizeof(IMUVals_t));
 
 	//Update max amplitude values for each axis
 	//Make sure to reset all values before going through
+	if(!findMax)
+	{
+		return;
+	}
 	memset(&IMURingBufferMax,0,sizeof(IMUVals));
 	for(uint8_t i=0; i<IMU_BUFFER_LEN;i++)
 	{

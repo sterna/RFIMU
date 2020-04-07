@@ -185,7 +185,7 @@ int main(int argc, char* argv[])
 	timeInit();
 	swInit();
 	adcInit();
-	uart1Init(115200);
+	uart1Init(250000);	//Todo: Upped the baud rate. 250000 is used, because this is what the Arduino serial plotter supports
 	//extFetInit();
 	onboardLedCtrlInit();
 	apa102Init(1,140);

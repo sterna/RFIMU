@@ -15,6 +15,7 @@
 //The communication timeout for the MPU6050 I2C
 #define MPU_TIMEOUT_MS	100
 //The period at which the MPU6050 process is called (in ms)
+#define MPU6050_SAMPLE_PERIOD	10
 #define MPU6050_PROCESS_PERIOD	30
 #define MPU6050_REPORT_PERIOD	250
 
