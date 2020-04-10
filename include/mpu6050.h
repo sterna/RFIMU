@@ -61,9 +61,6 @@ typedef enum
 	MTN_EVT_TAP_X=1,
 	MTN_EVT_TAP_Y=2,
 	MTN_EVT_TAP_Z=3,
-	MTN_EVT_TAP_ROLL=4,
-	MTN_EVT_TAP_PITCH=5,
-	MTN_EVT_TAP_YAW=6,
 	MTN_NOF_EVENTS
 }motionEvent_t;
 
@@ -117,5 +114,6 @@ bool mpu6050MotionEventActive(motionEvent_t evt);
 void mpu6050GetAngles(angles_t* ag);
 
 void mpu6050TransmitRaw(bool csv, bool newline);
+void mpu6050TransmitDataProcessed(bool csv, bool newline);
 
 #endif /* MPU6050_H_ */

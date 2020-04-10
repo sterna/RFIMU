@@ -26,7 +26,7 @@ extern volatile unsigned char motorRegPString[10];
 extern volatile unsigned char motorRegIString[10];
 extern volatile unsigned char motorRegDString[10];
 
-#define UART_TX_BUFFER_SIZE 50
+#define UART_TX_BUFFER_SIZE 100
 
 extern volatile char uartTxStringBuffer[UART_TX_BUFFER_SIZE];
 

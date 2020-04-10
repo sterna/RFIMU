@@ -827,7 +827,7 @@ bool poorMansOS()
 			dummyLedTask();
 		break;
 		case 4:
-			mpu6050Process();
+			mpu6050Task();
 		break;
 	}
 	task++;

@@ -357,17 +357,64 @@ void mpu6050TransmitRaw(bool csv, bool newline)
 	}
 }
 
+/*
+ * Prints out processed data through UART
+ */
+void mpu6050TransmitDataProcessed(bool csv, bool newline)
+{
+	int32_t vals[5];
+	if(mpu6050MotionEventActive(MTN_EVT_NO_MOTION_ALL))
+	{
+		vals[0]=1000;
+	}
+	else
+	{
+		vals[0]=500;
+	}
+	vals[1]=20*accImpulsePulseCount;
+	vals[2]=10*agEst.roll;
+	vals[3]=10*agEst.pitch;
+	if(csv)
+	{
+		uartSendCSV(vals,4,newline);
+	}
+	else
+	{
+		uartSendKeyVal("NoMot",vals[0],false);
+		uartSendKeyVal("ImpCount",vals[1],false);
+		uartSendKeyVal("AgRoll",vals[2],false);
+		uartSendKeyVal("AgPitch",vals[3],newline);
+	}
+
+}
+
 //Various filter parameters
+
+//No-motion
 //Thresholds used to determine no-motion event
 const int16_t noMotionThresholdAcc=40;
 const int16_t noMotionThresholdGyro=15;
 //If the total accelerometer force vector is close to this value, the device is stationary (or moving veery slowly)
 const int32_t notMotionAcc=1000;
+
+//Angle estimation (and gyro)
 //The gyro weight for the complementary used for angle estimation
 const int32_t gyroAgWeight=80;
 //Times used for gyro re-calibration interval. Calibration happens if we have no-motion for these times.
 const uint32_t gyroRecalibrateTimeAg=1500;
 const uint32_t gyroRecalibrateTime=5000;
+
+//Impulse parameters
+//The holdoff time before we can detect another impulse
+const uint32_t impulseHoldoffTime=150;
+//The max amplitude must be above this threshold
+const int32_t impulseThrehsoldAmplitude=2250;
+//The FWHM times must be between these times (in ms)
+const uint32_t FWHM_minTime=10;
+const uint32_t FWHM_maxTime=40;
+//The number of samples required before and after the pulse
+const uint32_t minSamplesBefore=1;
+const uint32_t minSamplesAfter=1;
 
 //Constants for accelerometer LP-filter
 volatile int32_t accNewWeight=20;
@@ -438,7 +485,10 @@ void mpu6050CalculateEvents()
 	int32_t totalAccVector=calculateTotalForceVectorStruct(&accVals);
 	//uartSendKeyVal("Vect",totalAccVector,true);
 
+
 	/*
+	 * --------------------- No-motion estimation-------------------
+	 *
 	 * Estimate no-motion (gyro max speed is close to 0 and total force vector of the acc is 1000mg
 	 */
 
@@ -450,7 +500,9 @@ void mpu6050CalculateEvents()
 	}
 	eventStateUpdate(&motionEvents[MTN_EVT_NO_MOTION_ALL],noMotionState);
 
+
 	/*
+	 * ------------------ Angle estimation -----------------------
 	 * Estimate angle relative to ground plane
 	 * Only roll (XZ) and roll pitch (YZ) angles are estimated, as yaw angle (XY) is tricky to estimate, since there's no acceleration info
 	 */
@@ -528,113 +580,59 @@ void mpu6050CalculateEvents()
 	uartSendCSV(agVals2,3,true);*/
 
 	/*
-	 * Todo: Estimate impulse (like a clap, stomp, or quick tilt).
+	 * ---------------- Impulse estimation -----------------
+	 *
+	 * Estimate impulse (like a clap, stomp, or tap).
 	 * Two types of impluses:
 	 * 	Angle impulse (based on gyro) - Didn't work well, and is not very useful. Angle estimation + time gate will solve this input
-	 * 	Hit impulse, based on acc or something
-	 *
-	 * An angle pulse has the following characteristics:
-	 * A short (maybe <300ms) increase in gyro in that direction, followed by a smaller, opposite direction pulse (when I turn my hand back)
-	 * Detection params:
-	 * - Max amplitude
-	 * - Half amplitude
-	 * - FWHM (length of pulse at half amplitude)
-	 * If the max amplitude is large enough, and the FWHM is within a defined window (a "lagom" long pulse), we have a pulse
-	 * Store a sample core of a number of samples (could be useful for other things too)
-	 * - Hold-off time afterwards
-	 *
+	 * 	Hit impulse, based on acc
 	 *
 	 * Hit impulse
 	 * Use the same method as the angle impulse with these parameters:
-	 * - High acc amplitude on any axis. (High as in above 1500mG or so)
-	 * - Very short pulse (from 1 to 3 samples or something)
+	 * - High acc amplitude on any axis.
+	 * - Very short pulse (in the range of 10 to 100 ms).
 	 * - Shorter holdoff (say 200ms or so)
 	 *
-	 *
-	 * New plan: Find which sample is the max sample. Analyse the other samples beside that sample for more information (go X samples before and X samples after)
+	 * General detection scheme:
+	 * 1. Find max sample in window
+	 * 2. Search from max sample in reverse to find the start of the pulse
+	 * 3. Search from max sample forward to find the end of the pulse
+	 * A pulse is considered to be active if the value is above half the value of max
 	 *
 	 */
-	static volatile bool gyroImpulseActive[3]={false,false,false};
-	static uint32_t gyroPulseNextAnalyzeTime=0;
-	//Todo: Make const
-	static volatile uint32_t gyroPulseHoldoffTime=150;
-	//The max gyro amplitude must be above this threshold
-	static volatile int32_t gyroThrehsoldAmplitude=2250;
-	//The FWHM times must be between these times (in ms)
-	static volatile uint32_t FWHM_minTime=10;
-	static volatile uint32_t FWHM_maxTime=40;
-	static volatile uint32_t minSamplesBefore=1;
-	static volatile uint32_t minSamplesAfter=1;
-
+	//The next time we shall perform impulse detection (handles the hold-off timer)
+	static uint32_t impulseNextAnalyzeTime=0;
 	//Only perform analysis when we have not recently found a pulse
-	if(systemTime>gyroPulseNextAnalyzeTime)
+	if(systemTime>impulseNextAnalyzeTime)
 	{
-		gyroImpulseActive[0]=false;
-		gyroImpulseActive[1]=false;
-		gyroImpulseActive[2]=false;
-
-		volatile uint32_t FWHM_minSamples=0;
-		volatile uint32_t FWHM_maxSamples=0;
-		//Calculate the number of samples that shall have this
-		FWHM_minSamples=FWHM_minTime/MPU6050_SAMPLE_PERIOD;
-		FWHM_maxSamples=FWHM_maxTime/MPU6050_SAMPLE_PERIOD;
-
-
+		//This is because it was annoying to extract the data from the struct into an array
 		int32_t maxSample[3]={0,0,0};
 		maxSample[0]=IMURingBufferMax.accX;
 		maxSample[1]=IMURingBufferMax.accY;
 		maxSample[2]=IMURingBufferMax.accZ;
-		//maxSample[0]=IMURingBufferMax.roll;
-		//maxSample[1]=IMURingBufferMax.pitch;
-		//maxSample[2]=IMURingBufferMax.yaw;
 		//Check if any amplitude is greater than the threshold exist, before wasting time looking it (because we already know this)
-		if(utilMax(abs(maxSample[0]),utilMax(abs(maxSample[1]),abs(maxSample[2])))>gyroThrehsoldAmplitude)
+		if(utilMax(abs(maxSample[0]),utilMax(abs(maxSample[1]),abs(maxSample[2])))>impulseThrehsoldAmplitude)
 		{
-			int32_t halfMaxVals[3]={0,0,0};
-			halfMaxVals[0]=maxSample[0]/2;
-			halfMaxVals[1]=maxSample[1]/2;
-			halfMaxVals[2]=maxSample[2]/2;
-			//Go through the whole sample window to look for a match
-			//uint8_t bufInd=IMURingBufIndex;
-			IMUVals_t tmpData;
-			uint8_t FWHMSamplesAbove[3]={0,0,0};
-			uint8_t FWHMSamplesBelowBefore[3]={0,0,0};
-			uint8_t FWHMSamplesBelowAfter[3]={0,0,0};
 			uint8_t maxRingBufferIndex[3]={0,0,0};
 			maxRingBufferIndex[0]=IMURingBufferMaxIndex.accX;
 			maxRingBufferIndex[1]=IMURingBufferMaxIndex.accY;
 			maxRingBufferIndex[2]=IMURingBufferMaxIndex.accZ;
 
-			//New method: Start from where the max sample is located. Go from there a number of cycles back and a number of cycles forth to anaylse the pulse.
-			enum
-			{
-				PULSE_BEFORE,
-				PULSE_DURING,
-				PULSE_AFTER,
-				PULSE_SUCCESS,
-				PULSE_FAIL
-			};
+			const uint32_t FWHM_minSamples=FWHM_minTime/MPU6050_SAMPLE_PERIOD;
+			const uint32_t FWHM_maxSamples=FWHM_maxTime/MPU6050_SAMPLE_PERIOD;
 
+			//Calculate the number of samples that shall have this
 			bool pulseFound=false;
 			for(uint8_t ax=0;ax<3 && pulseFound==false;ax++)
 			{
-				if(abs(maxSample[ax])>gyroThrehsoldAmplitude)
+				//Make sure we only analyze axis which have a high enough max
+				if(abs(maxSample[ax])>impulseThrehsoldAmplitude)
 				{
-					//Only analyze data if maxIndex shows up near the middle of the sample window
-					//Increase newest data index by
-					/*bool pulseInMiddle=true;
-					uint8_t ringBufInd=0;
-					ringBufInd=IMURingBufIndex;
-					for(uint8_t i=0;i<IMU_BUFFER_LEN;i++)
-					{
-						ringBufInd=utilIncLoopSimple(ringBufInd,IMU_BUFFER_LEN-1);
-						if(ringBufInd == maxRingBufferIndex[ax])
-						{
-
-							//Below min sample limit
-							//Above max sample limit
-						}
-					}*/
+					int32_t halfMaxVal=maxSample[ax]/2;
+					//Counters for the number of samples for various events
+					uint8_t FWHMSamplesAbove=0;
+					uint8_t FWHMSamplesBelowBefore=0;
+					uint8_t FWHMSamplesBelowAfter=0;
 					//Copy data from ringbuffer into a buffer that's easier to work with. Index 0 is the oldest data.
 					int16_t dataBuf[IMU_BUFFER_LEN];
 					uint8_t tmpRingIndex=IMURingBufIndex;
@@ -649,16 +647,7 @@ void mpu6050CalculateEvents()
 						}
 					}
 
-					//Fetch max data
-					//Start from maxIndex-FWHMMaxSamples-samplesBefore and go for FWHMMaxSamples+samplesBefore+samplesAfter
 					uint8_t dataIndex=0;
-
-					/*
-					 * Once more with feeling!
-					 * Let's find the max index, first walk back until we find beginning of pulse. Count samples.
-					 * Then move from max index (+1) again until we find the end of the pulse
-					 * If we ever find the edge of the window, abort and ignore until next time
-					 */
 					dataIndex=tmpMaxIndex;
 					bool pulseStartOK=false;
 					bool pulseEndOK=false;
@@ -668,25 +657,25 @@ void mpu6050CalculateEvents()
 					{
 						int16_t data=dataBuf[dataIndex];
 						bool aboveHM=false;
-						if((abs(data) > abs(halfMaxVals[ax])) &&
-								(utilSign(data)==utilSign(halfMaxVals[ax])))
+						if((abs(data) > abs(halfMaxVal)) &&
+								(utilSign(data)==utilSign(halfMaxVal)))
 						{
 							aboveHM=true;
 						}
 						if(aboveHM)
 						{
-							FWHMSamplesAbove[ax]++;
+							FWHMSamplesAbove++;
 						}
 						else
 						{
-							FWHMSamplesBelowBefore[ax]++;
+							FWHMSamplesBelowBefore++;
 						}
-						if(FWHMSamplesBelowBefore[ax]>=minSamplesBefore && FWHMSamplesAbove[ax]>=FWHM_minSamples)
+						if(FWHMSamplesBelowBefore>=minSamplesBefore && FWHMSamplesAbove>=FWHM_minSamples)
 						{
 							//Success! We found a valid start of pulse
 							pulseStartOK=true;
 						}
-						if(FWHMSamplesAbove[ax]>FWHM_maxSamples)
+						if(FWHMSamplesAbove>FWHM_maxSamples)
 						{
 							pulseFail=true;
 						}
@@ -717,25 +706,25 @@ void mpu6050CalculateEvents()
 					{
 						int16_t data=dataBuf[dataIndex];
 						bool aboveHM=false;
-						if((abs(data) > abs(halfMaxVals[ax])) &&
-								(utilSign(data)==utilSign(halfMaxVals[ax])))
+						if((abs(data) > abs(halfMaxVal)) &&
+								(utilSign(data)==utilSign(halfMaxVal)))
 						{
 							aboveHM=true;
 						}
 						if(aboveHM)
 						{
-							FWHMSamplesAbove[ax]++;
+							FWHMSamplesAbove++;
 						}
 						else
 						{
-							FWHMSamplesBelowAfter[ax]++;
+							FWHMSamplesBelowAfter++;
 						}
-						if(FWHMSamplesBelowAfter[ax]>=minSamplesAfter && FWHMSamplesAbove[ax]>=FWHM_minSamples)
+						if(FWHMSamplesBelowAfter>=minSamplesAfter && FWHMSamplesAbove>=FWHM_minSamples)
 						{
 							//Success! We found a valid end of pulse
 							pulseEndOK=true;
 						}
-						if(FWHMSamplesAbove[ax]>FWHM_maxSamples)
+						if(FWHMSamplesAbove>FWHM_maxSamples)
 						{
 							pulseFail=true;
 						}
@@ -753,7 +742,7 @@ void mpu6050CalculateEvents()
 						gyroImpulseSamplesPositive[ax]++;
 						accImpulsePulseCount++;
 						pulseFound=true;
-						gyroPulseNextAnalyzeTime=systemTime+gyroPulseHoldoffTime;
+						impulseNextAnalyzeTime=systemTime+impulseHoldoffTime;
 					}
 					if(pulseFail)
 					{
@@ -823,8 +812,11 @@ void mpu6050GetAngles(angles_t* ag)
 }
 
 
-//Call this function every 50ms or so, to start a measurement.
-void mpu6050Process()
+/*
+ * The task for for the MPU6050 handling and analysis
+ * Call as often as possible (has it's own time gate)
+ */
+void mpu6050Task()
 {
 	static uint32_t nextCallTime=0;
 	static uint32_t nextSendTime=0;
@@ -857,7 +849,8 @@ void mpu6050Process()
 				mpu6050CalculateEvents();
 			}
 			//Transmit all the values through UART
-			mpu6050TransmitRaw(true,true);
+			//mpu6050TransmitRaw(true,true);
+			mpu6050TransmitDataProcessed(true,true);
 
 		}
 	}
