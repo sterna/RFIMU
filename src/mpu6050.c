@@ -48,6 +48,8 @@ static volatile uint8_t IMURingBufIndex=0;
 //The max amplitude values for each axis in the current ring buffer. The values keep their sign.
 //Note that these are not necessarily (and most likely) not from the same sample
 static volatile IMUVals_t IMURingBufferMax;
+//Holds the index for the currently max sample. Note that this is not actually IMUVals, but only indexes
+static volatile IMUVals_t IMURingBufferMaxIndex;
 
 //Current angle estimation
 static angles_t agEst={0,0,0};
@@ -65,9 +67,11 @@ static void i2cWriteRegisterBlocking(uint8_t addr, uint8_t value);
 static inline bool isAxis(uint8_t axis);
 static bool axisIsAcc(uint8_t axis);
 static bool axisIsGyro(uint8_t axis);
+int16_t getDataFromStructByAxisIndex(IMUVals_t* str,uint8_t ax);
 
 uint32_t calculateTotalForceVector(int32_t* val);
 uint32_t calculateTotalForceVectorStruct(accVals_t* vals);
+
 
 static void updateIMURingBuffer(IMUVals_t* newdata, bool findMax);
 void getLatestIMURingBufferData(IMUVals_t* data);
@@ -569,8 +573,8 @@ void mpu6050CalculateEvents()
 		gyroImpulseActive[1]=false;
 		gyroImpulseActive[2]=false;
 
-		volatile uint32_t FWHM_minSamples=2;
-		volatile uint32_t FWHM_maxSamples=2;
+		volatile uint32_t FWHM_minSamples=0;
+		volatile uint32_t FWHM_maxSamples=0;
 		//Calculate the number of samples that shall have this
 		FWHM_minSamples=FWHM_minTime/MPU6050_SAMPLE_PERIOD;
 		FWHM_maxSamples=FWHM_maxTime/MPU6050_SAMPLE_PERIOD;
@@ -596,128 +600,170 @@ void mpu6050CalculateEvents()
 			uint8_t FWHMSamplesAbove[3]={0,0,0};
 			uint8_t FWHMSamplesBelowBefore[3]={0,0,0};
 			uint8_t FWHMSamplesBelowAfter[3]={0,0,0};
-			//Pulse state, 0=before, 1=during, 2=after
-			uint8_t pulseState[3]={0,0,0};
-			int16_t gyroValsTmp[3]={0,0,0};
-			for(uint8_t i=0;i<IMU_BUFFER_LEN;i++)
+			uint8_t maxRingBufferIndex[3]={0,0,0};
+			maxRingBufferIndex[0]=IMURingBufferMaxIndex.accX;
+			maxRingBufferIndex[1]=IMURingBufferMaxIndex.accY;
+			maxRingBufferIndex[2]=IMURingBufferMaxIndex.accZ;
+
+			//New method: Start from where the max sample is located. Go from there a number of cycles back and a number of cycles forth to anaylse the pulse.
+			enum
 			{
-				//Get next data
-				getIMURingBufferDataByIndex(&tmpData,i,true);
-				gyroValsTmp[0]=tmpData.accX;
-				gyroValsTmp[1]=tmpData.accY;
-				gyroValsTmp[2]=tmpData.accZ;
-				//gyroValsTmp[0]=tmpData.roll;
-				//gyroValsTmp[1]=tmpData.pitch;
-				//gyroValsTmp[2]=tmpData.yaw;
-				for(uint8_t axis=0;axis<3;axis++)
+				PULSE_BEFORE,
+				PULSE_DURING,
+				PULSE_AFTER,
+				PULSE_SUCCESS,
+				PULSE_FAIL
+			};
+
+			bool pulseFound=false;
+			for(uint8_t ax=0;ax<3 && pulseFound==false;ax++)
+			{
+				if(abs(maxSample[ax])>gyroThrehsoldAmplitude)
 				{
-					//Todo: Go through axis by axis and do all the updates, comparisons and stuff
-					//Check if the current sample is above the Half maximum and if they are the same direction
-					if(pulseState[axis]<3 &&
-						(abs(maxSample[axis])>gyroThrehsoldAmplitude))
+					//Only analyze data if maxIndex shows up near the middle of the sample window
+					//Increase newest data index by
+					/*bool pulseInMiddle=true;
+					uint8_t ringBufInd=0;
+					ringBufInd=IMURingBufIndex;
+					for(uint8_t i=0;i<IMU_BUFFER_LEN;i++)
 					{
+						ringBufInd=utilIncLoopSimple(ringBufInd,IMU_BUFFER_LEN-1);
+						if(ringBufInd == maxRingBufferIndex[ax])
+						{
+
+							//Below min sample limit
+							//Above max sample limit
+						}
+					}*/
+					//Copy data from ringbuffer into a buffer that's easier to work with. Index 0 is the oldest data.
+					int16_t dataBuf[IMU_BUFFER_LEN];
+					uint8_t tmpRingIndex=IMURingBufIndex;
+					uint8_t tmpMaxIndex=0;
+					for(uint8_t i=0;i<IMU_BUFFER_LEN;i++)
+					{
+						tmpRingIndex=utilIncLoopSimple(tmpRingIndex,IMU_BUFFER_LEN-1);
+						dataBuf[i]=getDataFromStructByAxisIndex(&IMURingBuffer[tmpRingIndex],ax);
+						if(maxRingBufferIndex[ax]==tmpRingIndex)
+						{
+							tmpMaxIndex=i;
+						}
+					}
+
+					//Fetch max data
+					//Start from maxIndex-FWHMMaxSamples-samplesBefore and go for FWHMMaxSamples+samplesBefore+samplesAfter
+					uint8_t dataIndex=0;
+
+					/*
+					 * Once more with feeling!
+					 * Let's find the max index, first walk back until we find beginning of pulse. Count samples.
+					 * Then move from max index (+1) again until we find the end of the pulse
+					 * If we ever find the edge of the window, abort and ignore until next time
+					 */
+					dataIndex=tmpMaxIndex;
+					bool pulseStartOK=false;
+					bool pulseEndOK=false;
+					bool pulseFail=false;
+					//Count backwards
+					while(!pulseStartOK && !pulseFail)
+					{
+						int16_t data=dataBuf[dataIndex];
 						bool aboveHM=false;
-						if((abs(gyroValsTmp[axis]) > abs(halfMaxVals[axis])) &&
-								(utilSign(gyroValsTmp[axis])==utilSign(halfMaxVals[axis])))
+						if((abs(data) > abs(halfMaxVals[ax])) &&
+								(utilSign(data)==utilSign(halfMaxVals[ax])))
 						{
 							aboveHM=true;
 						}
-						switch(pulseState[axis])
+						if(aboveHM)
 						{
-							case 0:	//Before
-								if(aboveHM)
-								{
-									FWHMSamplesAbove[axis]++;
-									if(FWHMSamplesAbove[axis]>=FWHM_minSamples)
-									{
-										pulseState[axis]=1;
-									}
-								}
-								else
-								{
-									FWHMSamplesBelowBefore[axis]++;
-								}
-								break;
-							case 1:	//During
-								if(aboveHM)
-								{
-									FWHMSamplesAbove[axis]++;
-								}
-								else
-								{
-									//We now went under, which should not happen during a pulse (no LP-filter here!). End of pulse.
-									pulseState[axis]=2;
-								}
-								break;
-							case 2:	//After
-								if(aboveHM)
-								{
-									FWHMSamplesAbove[axis]++;
-								}
-								else
-								{
-									FWHMSamplesBelowAfter[axis]++;
-									//Stop analysis as soon as we have gone over the number of pulses below HM.
-									if(FWHMSamplesBelowAfter[axis]>=minSamplesAfter)
-									{
-										pulseState[axis]=3;
-									}
-								}
-								break;
-						}
-						/*
-						if((abs(gyroValsTmp[axis]) > abs(halfMaxVals[axis])))
-						{
-							FWHMSamplesAbove[axis]++;
-							if(FWHMSamplesAbove[axis]>FWHM_minSamples)
-							{
-								beforePulse[axis]=false;
-							}
-						}
-						else if (beforePulse[axis])
-						{
-							FWHMSamplesBelowBefore[axis]++;
-						}
-						else if (!beforePulse[axis])
-						{
-							FWHMSamplesBelowAfter[axis]++;
-						}*/
-					}
-				}
-			}
-			bool pulseFound=false;
-			//Now, we have checked all samples in window and picked out the number of samples that are above the threshold
-			for(uint8_t axis=0;axis<3;axis++)
-			{
-				if(!pulseFound && pulseState[axis]>=3)
-				{
-					if((FWHMSamplesAbove[axis]>=FWHM_minSamples && FWHMSamplesAbove[axis]<=FWHM_maxSamples) &&
-						(FWHMSamplesBelowBefore[axis]>=minSamplesBefore && FWHMSamplesBelowAfter[axis]>=minSamplesAfter))
-					{
-						gyroImpulseActive[axis]=true;
-						gyroImpulseSamplesPositive[axis]++;
-						accImpulsePulseCount++;
-						pulseFound=true;
-						/*if(utilSign(halfMaxVals[axis])==1)
-						{
-							gyroImpulseSamplesPositive[axis]++;
+							FWHMSamplesAbove[ax]++;
 						}
 						else
 						{
-							gyroImpulseSamplesNegative[axis]++;
-						}*/
-						gyroPulseNextAnalyzeTime=systemTime+gyroPulseHoldoffTime;
-
-					}
-					else
+							FWHMSamplesBelowBefore[ax]++;
+						}
+						if(FWHMSamplesBelowBefore[ax]>=minSamplesBefore && FWHMSamplesAbove[ax]>=FWHM_minSamples)
+						{
+							//Success! We found a valid start of pulse
+							pulseStartOK=true;
+						}
+						if(FWHMSamplesAbove[ax]>FWHM_maxSamples)
+						{
+							pulseFail=true;
+						}
+						if(dataIndex)
+						{
+							dataIndex--;
+						}
+						else if(!pulseStartOK)
+						{
+							pulseFail=true;
+						}
+					}	//End of pulseStart-detection
+					//Count forwards
+					dataIndex=tmpMaxIndex+1;
+					//Check if we are at the end of window and if this might actuallt be OK
+					if(dataIndex>=IMU_BUFFER_LEN)
 					{
-						gyroImpulseActive[axis]=false;
+						if(pulseStartOK && minSamplesAfter==0)
+						{
+							pulseEndOK=true;
+						}
+						else
+						{
+							pulseFail=true;
+						}
+					}
+					while(!pulseEndOK && !pulseFail)
+					{
+						int16_t data=dataBuf[dataIndex];
+						bool aboveHM=false;
+						if((abs(data) > abs(halfMaxVals[ax])) &&
+								(utilSign(data)==utilSign(halfMaxVals[ax])))
+						{
+							aboveHM=true;
+						}
+						if(aboveHM)
+						{
+							FWHMSamplesAbove[ax]++;
+						}
+						else
+						{
+							FWHMSamplesBelowAfter[ax]++;
+						}
+						if(FWHMSamplesBelowAfter[ax]>=minSamplesAfter && FWHMSamplesAbove[ax]>=FWHM_minSamples)
+						{
+							//Success! We found a valid end of pulse
+							pulseEndOK=true;
+						}
+						if(FWHMSamplesAbove[ax]>FWHM_maxSamples)
+						{
+							pulseFail=true;
+						}
+
+						dataIndex++;
+						if(dataIndex>=IMU_BUFFER_LEN && !pulseEndOK)
+						{
+							pulseFail=true;
+						}
+					}	//End of pulseEnd-detection
+
+					//Check if we found a valid start and end of pulse
+					if(!pulseFail && pulseStartOK && pulseEndOK)
+					{
+						gyroImpulseSamplesPositive[ax]++;
+						accImpulsePulseCount++;
+						pulseFound=true;
+						gyroPulseNextAnalyzeTime=systemTime+gyroPulseHoldoffTime;
+					}
+					if(pulseFail)
+					{
+						gyroImpulseSamplesNegative[ax]++;
 					}
 				}
 			}
-
 		}
-	}
+	}	//End of impulse analysis
+
 	/*
 	 *	Todo: Implement gesture/sequence recording and recognition
 	 *	This will most likely not work well...
@@ -868,26 +914,32 @@ static void updateIMURingBuffer(IMUVals_t* newdata, bool findMax)
 		if(abs(IMURingBuffer[i].accX)>abs(IMURingBufferMax.accX))
 		{
 			IMURingBufferMax.accX=IMURingBuffer[i].accX;
+			IMURingBufferMaxIndex.accX = i;
 		}
 		if(abs(IMURingBuffer[i].accY)>abs(IMURingBufferMax.accY))
 		{
 			IMURingBufferMax.accY=IMURingBuffer[i].accY;
+			IMURingBufferMaxIndex.accY = i;
 		}
 		if(abs(IMURingBuffer[i].accZ)>abs(IMURingBufferMax.accZ))
 		{
 			IMURingBufferMax.accZ=IMURingBuffer[i].accZ;
+			IMURingBufferMaxIndex.accZ = i;
 		}
 		if(abs(IMURingBuffer[i].roll)>abs(IMURingBufferMax.roll))
 		{
 			IMURingBufferMax.roll=IMURingBuffer[i].roll;
+			IMURingBufferMaxIndex.roll = i;
 		}
 		if(abs(IMURingBuffer[i].pitch)>abs(IMURingBufferMax.pitch))
 		{
 			IMURingBufferMax.pitch=IMURingBuffer[i].pitch;
+			IMURingBufferMaxIndex.pitch = i;
 		}
 		if(abs(IMURingBuffer[i].yaw)>abs(IMURingBufferMax.yaw))
 		{
 			IMURingBufferMax.yaw=IMURingBuffer[i].yaw;
+			IMURingBufferMaxIndex.yaw = i;
 		}
 	}
 }
@@ -919,6 +971,33 @@ void getIMURingBufferDataByIndex(IMUVals_t* data, uint8_t index, bool fromOldest
 	//Find right index:
 	tmpIndex=utilIncWithDir(IMURingBufIndex,direction,index,0,IMU_BUFFER_LEN-1);
 	memcpy(data,&IMURingBuffer[tmpIndex],sizeof(IMUVals_t));
+}
+
+int16_t getDataFromStructByAxisIndex(IMUVals_t* str,uint8_t ax)
+{
+	switch(ax)
+	{
+		case AXIS_X:
+			return str->accX;
+			break;
+		case AXIS_Y:
+			return str->accY;
+			break;
+		case AXIS_Z:
+			return str->accZ;
+			break;
+		case AXIS_ROLL:
+			return str->roll;
+			break;
+		case AXIS_PITCH:
+			return str->pitch;
+			break;
+		case AXIS_YAW:
+			return str->yaw;
+			break;
+		default:
+			return 0;
+	}
 }
 
 /*
