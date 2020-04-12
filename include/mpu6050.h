@@ -54,15 +54,22 @@ enum
 	AXIS_ALL=255
 };
 
-//Defines the bit of motion events
+/*
+ * The various motion events we can have
+ */
 typedef enum
 {
 	MTN_EVT_NO_MOTION_ALL=0,
-	MTN_EVT_TAP_X=1,
-	MTN_EVT_TAP_Y=2,
-	MTN_EVT_TAP_Z=3,
+	MTN_EVT_IMPULSE=1,
+	MTN_EVT_AG_NEUTRAL=2,
+	MTN_EVT_AG_UPSIDEDOWN=3,
+	MTN_EVT_AG_HAND_UP=4,
+	MTN_EVT_AG_HAND_DOWN=5,
+	MTN_EVT_AG_THUMB_UP=6,
+	MTN_EVT_AG_THUMB_DOWN=7,
 	MTN_NOF_EVENTS
 }motionEvent_t;
+
 
 /*
  * Contatins the IMU values for all axis
@@ -98,6 +105,7 @@ void mpu6050Init();
 void mpu6050Process();
 void mpu6050SetOffset(uint8_t axis, int16_t val, bool isG);
 void mpu6050ResetAllOffsets();
+void mpu6050SetOffsetsToCurrent(uint8_t axisTo1G);
 
 int16_t mpu6050GetValue(uint8_t axis,bool applyOffset, bool realUnits);
 int16_t mpu6050GetOffset(uint8_t axis);

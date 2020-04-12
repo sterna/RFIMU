@@ -53,16 +53,17 @@ static volatile IMUVals_t IMURingBufferMaxIndex;
 static volatile IMUVals_t IMURingBufferLP;
 //The number of samples to be used for the low-pass versions of the IMU values. The samples are counted from latest sample
 //None of these values must be larger than IMU_BUFFER_LEN
-static volatile uint8_t LPSamplesAcc=12;
-static volatile uint8_t LPSamplesGyro=4;
+static const uint8_t LPSamplesAcc=12;
+static const uint8_t LPSamplesGyro=4;
 
-//Current angle estimation
+//Current angle estimation. Unit is whole degrees
 static angles_t agEst={0,0,0};
 
-//Counters for angle pulses
-static volatile uint32_t gyroImpulseSamplesPositive[3]={0,0,0};
-static volatile uint32_t gyroImpulseSamplesNegative[3]={0,0,0};
+//Counter for impulse events
 static volatile uint32_t accImpulsePulseCount=0;
+
+static bool gyroInitCalibrated=false;
+
 
 //----------- Internal functions -------------//
 
@@ -121,7 +122,12 @@ void mpu6050Init()
 		eventInit(&motionEvents[i]);
 	}
 	motionEvents[MTN_EVT_NO_MOTION_ALL].threshold=5;
-	//Todo: Add settings for the rest of the motionEvents (if reasonable)
+	//Set all angle motion events threshold to the same value
+	for(uint8_t i= MTN_EVT_AG_NEUTRAL;i<=MTN_EVT_AG_THUMB_DOWN;i++)
+	{
+		motionEvents[i].threshold=2;
+	}
+	//Todo: Add settings for the rest of the motionEvents, when they are defined
 
 }
 
@@ -188,6 +194,24 @@ void mpu6050SetOffset(uint8_t axis, int16_t val, bool isG)
 		}
 	}
 	IMUValOffsets[axis]=val;
+}
+
+/*
+ * Sets all offsets to the current value.
+ * Used as a 0
+ * Axis indicates which acc axis shall be set to 1G
+ */
+void mpu6050SetOffsetsToCurrent(uint8_t axisTo1G)
+{
+	for(uint8_t i=AXIS_X;i<AXIS_NOF;i++)
+	{
+		int16_t tmpOffset=0;
+		if(i==axisTo1G && axisIsAcc(axisTo1G))
+		{
+			tmpOffset=mpu6050ConvertGtoAcc(1000);
+		}
+		mpu6050SetOffset(i,IMUVals[i]+tmpOffset,false);
+	}
 }
 
 /*
@@ -374,16 +398,7 @@ void mpu6050TransmitRaw(bool csv, bool newline)
  */
 void mpu6050TransmitDataProcessed(bool csv, bool newline)
 {
-	int32_t vals[5];
-	IMUVals_t tmp;
-	accVals_t accVals;
-	//Includes offset
-	getLatestIMURingBufferData(&tmp);
-	accVals.accX=(int32_t)tmp.accX;
-	accVals.accY=(int32_t)tmp.accY;
-	accVals.accZ=(int32_t)tmp.accZ;
-	uint32_t totalForceVector=calculateTotalForceVectorStruct(&accVals);
-
+	int32_t vals[10];
 	if(mpu6050MotionEventActive(MTN_EVT_NO_MOTION_ALL))
 	{
 		vals[0]=1000;
@@ -393,9 +408,24 @@ void mpu6050TransmitDataProcessed(bool csv, bool newline)
 		vals[0]=500;
 	}
 	vals[1]=20*accImpulsePulseCount;
-	vals[2]=10*agEst.roll;
-	vals[3]=10*agEst.pitch;
-	vals[4]=totalForceVector;
+	uint8_t i=MTN_EVT_AG_NEUTRAL;
+	for(i=MTN_EVT_AG_NEUTRAL;i<=MTN_EVT_AG_THUMB_DOWN;i++)
+	{
+		if(mpu6050MotionEventActive(i))
+		{
+			break;
+		}
+	}
+	if(i<=MTN_EVT_AG_THUMB_DOWN)
+	{
+		vals[2]=i*100;
+	}
+	else
+	{
+		vals[2]=0;
+	}
+	vals[3]=10*agEst.roll;
+	vals[4]=10*agEst.pitch;
 	if(csv)
 	{
 		uartSendCSV(vals,5,newline);
@@ -584,6 +614,65 @@ void mpu6050CalculateEvents()
 	uartSendCSV(agVals2,3,true);*/
 
 	/*
+	 * ----------------- Angle event estimation -------------
+	 *
+	 * Estimate which of the following event angles is true. Assuming right hand.
+	 *
+	 * EventName	AG_Roll(X)	AG pitch Y)
+	 * Neutral		0			0
+	 * UpsideDown	180			180
+	 * HandUp		NC			-90
+	 * HandDown		NC			90
+	 * ThumbUp		90			NC
+	 * ThumbDown	-90			NC
+	 */
+
+	//The angle event is valid of close enough to the target
+	{
+		static volatile int16_t agEvtTol=20;
+		motionEvent_t eventTrue=0;
+		int16_t agRoll=agEst.roll;
+		int16_t agPitch=agEst.pitch;
+		if(utilValCloseEnoughDual(agRoll,agPitch,0,0,agEvtTol))
+		{
+			eventTrue=MTN_EVT_AG_NEUTRAL;
+		}
+		else if(utilValCloseEnoughDual(agRoll,agPitch,180,180,agEvtTol))
+		{
+			eventTrue=MTN_EVT_AG_UPSIDEDOWN;
+		}
+		else if(utilValCloseEnough(agPitch,-90,agEvtTol))
+		{
+			eventTrue=MTN_EVT_AG_HAND_UP;
+		}
+		else if(utilValCloseEnough(agPitch,90,agEvtTol))
+		{
+			eventTrue=MTN_EVT_AG_HAND_DOWN;
+		}
+		else if(utilValCloseEnough(agRoll,90,agEvtTol))
+		{
+			eventTrue=MTN_EVT_AG_THUMB_UP;
+		}
+		else if(utilValCloseEnough(agRoll,-90,agEvtTol))
+		{
+			eventTrue=MTN_EVT_AG_THUMB_DOWN;
+		}
+		motionEvent_t i=MTN_EVT_AG_NEUTRAL;
+		while(i<=MTN_EVT_AG_THUMB_DOWN)
+		{
+			if(eventTrue==i)
+			{
+				eventStateUpdate(&motionEvents[i],true);
+			}
+			else
+			{
+				eventStateUpdate(&motionEvents[i],false);
+			}
+			i++;
+		}
+	}
+
+	/*
 	 * ---------------- Impulse estimation -----------------
 	 *
 	 * Estimate impulse (like a clap, stomp, or tap).
@@ -743,19 +832,15 @@ void mpu6050CalculateEvents()
 					//Check if we found a valid start and end of pulse
 					if(!pulseFail && pulseStartOK && pulseEndOK)
 					{
-						gyroImpulseSamplesPositive[ax]++;
 						accImpulsePulseCount++;
 						pulseFound=true;
 						impulseNextAnalyzeTime=systemTime+impulseHoldoffTime;
-					}
-					if(pulseFail)
-					{
-						gyroImpulseSamplesNegative[ax]++;
 					}
 				}
 			}
 		}
 	}	//End of impulse analysis
+
 
 	/*
 	 *	Todo: Implement gesture/sequence recording and recognition
@@ -780,6 +865,7 @@ void mpu6050CalculateEvents()
 		mpu6050SetOffset(AXIS_ROLL,IMUVals[AXIS_ROLL],false);
 		mpu6050SetOffset(AXIS_PITCH,IMUVals[AXIS_PITCH],false);
 		mpu6050SetOffset(AXIS_YAW,IMUVals[AXIS_YAW],false);
+		gyroInitCalibrated=true;
 	}
 }
 
@@ -844,8 +930,8 @@ void mpu6050Task()
 				mpu6050CalculateEvents();
 			}
 			//Transmit all the values through UART
-			mpu6050TransmitRaw(true,true);
-			//mpu6050TransmitDataProcessed(true,true);
+			//mpu6050TransmitRaw(true,true);
+			mpu6050TransmitDataProcessed(true,true);
 
 		}
 	}
