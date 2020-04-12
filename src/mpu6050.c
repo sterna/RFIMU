@@ -18,7 +18,6 @@
 
 //----------- Internal variables and definitions -------------//
 
-
 static unsigned char MPU6050Busy=0;
 static unsigned char MPU6050RegisterBuffer[14];
 volatile unsigned char mpuIsInited=0;
@@ -50,6 +49,12 @@ static volatile uint8_t IMURingBufIndex=0;
 static volatile IMUVals_t IMURingBufferMax;
 //Holds the index for the currently max sample. Note that this is not actually IMUVals, but only indexes
 static volatile IMUVals_t IMURingBufferMaxIndex;
+//Low-pass filtered values based on the ringbuffer
+static volatile IMUVals_t IMURingBufferLP;
+//The number of samples to be used for the low-pass versions of the IMU values. The samples are counted from latest sample
+//None of these values must be larger than IMU_BUFFER_LEN
+static volatile uint8_t LPSamplesAcc=12;
+static volatile uint8_t LPSamplesGyro=4;
 
 //Current angle estimation
 static angles_t agEst={0,0,0};
@@ -73,7 +78,7 @@ uint32_t calculateTotalForceVector(int32_t* val);
 uint32_t calculateTotalForceVectorStruct(accVals_t* vals);
 
 
-static void updateIMURingBuffer(IMUVals_t* newdata, bool findMax);
+static void updateIMURingBuffer(IMUVals_t* newdata, bool doCalculations);
 void getLatestIMURingBufferData(IMUVals_t* data);
 void getIMURingBufferDataByIndex(IMUVals_t* data, uint8_t index, bool fromOldest);
 
@@ -321,18 +326,25 @@ void mpu6050TransmitRaw(bool csv, bool newline)
 	mpu6050GetAllValuesStruct(&vals,true,false);
 	if(csv)
 	{
-		int32_t csvValsAcc[5];
+		int32_t csvValsAcc[8];
 		int32_t csvValsGyro[4];
-		csvValsAcc[0]=mpu6050ConvertAccToG(vals.accX);
-		csvValsAcc[1]=mpu6050ConvertAccToG(vals.accY);
-		csvValsAcc[2]=mpu6050ConvertAccToG(vals.accZ);
-		csvValsAcc[3]=50*accImpulsePulseCount;
-		uartSendCSV(csvValsAcc,4,newline);	//todo: remove newline here
-		/*csvValsAcc[0]=50*(gyroImpulseSamplesPositive[0]-gyroImpulseSamplesNegative[0]);
-		csvValsAcc[1]=50*(gyroImpulseSamplesPositive[1]-gyroImpulseSamplesNegative[1]);
-		csvValsAcc[2]=50*(gyroImpulseSamplesPositive[2]-gyroImpulseSamplesNegative[2]);*/
-		//csvValsAcc[3]=calculateTotalForceVector(csvValsAcc);
-		//uartSendCSV(csvValsAcc,3,false);
+		csvValsAcc[0]=mpu6050ConvertGyroToDegS(vals.roll);//mpu6050ConvertAccToG(vals.accX);
+		csvValsAcc[1]=mpu6050ConvertGyroToDegS(vals.pitch);//mpu6050ConvertAccToG(vals.accY);
+		csvValsAcc[2]=mpu6050ConvertGyroToDegS(vals.yaw);//mpu6050ConvertAccToG(vals.accZ);
+		csvValsAcc[3]=IMURingBufferLP.roll;
+		csvValsAcc[4]=IMURingBufferLP.pitch;
+		csvValsAcc[5]=IMURingBufferLP.yaw;
+		if(mpu6050MotionEventActive(MTN_EVT_NO_MOTION_ALL))
+		{
+			csvValsAcc[6]=1000;
+		}
+		else
+		{
+			csvValsAcc[6]=500;
+		}
+
+		uartSendCSV(csvValsAcc,7,newline);	//todo: remove newline here (and also the return)
+		return;
 		csvValsGyro[0]=mpu6050ConvertGyroToDegS(vals.roll);
 		csvValsGyro[1]=mpu6050ConvertGyroToDegS(vals.pitch);
 		csvValsGyro[2]=mpu6050ConvertGyroToDegS(vals.yaw);
@@ -363,6 +375,15 @@ void mpu6050TransmitRaw(bool csv, bool newline)
 void mpu6050TransmitDataProcessed(bool csv, bool newline)
 {
 	int32_t vals[5];
+	IMUVals_t tmp;
+	accVals_t accVals;
+	//Includes offset
+	getLatestIMURingBufferData(&tmp);
+	accVals.accX=(int32_t)tmp.accX;
+	accVals.accY=(int32_t)tmp.accY;
+	accVals.accZ=(int32_t)tmp.accZ;
+	uint32_t totalForceVector=calculateTotalForceVectorStruct(&accVals);
+
 	if(mpu6050MotionEventActive(MTN_EVT_NO_MOTION_ALL))
 	{
 		vals[0]=1000;
@@ -374,9 +395,10 @@ void mpu6050TransmitDataProcessed(bool csv, bool newline)
 	vals[1]=20*accImpulsePulseCount;
 	vals[2]=10*agEst.roll;
 	vals[3]=10*agEst.pitch;
+	vals[4]=totalForceVector;
 	if(csv)
 	{
-		uartSendCSV(vals,4,newline);
+		uartSendCSV(vals,5,newline);
 	}
 	else
 	{
@@ -384,6 +406,7 @@ void mpu6050TransmitDataProcessed(bool csv, bool newline)
 		uartSendKeyVal("ImpCount",vals[1],false);
 		uartSendKeyVal("AgRoll",vals[2],false);
 		uartSendKeyVal("AgPitch",vals[3],newline);
+		uartSendKeyVal("AccVect",vals[4],newline);
 	}
 
 }
@@ -399,7 +422,8 @@ const int32_t notMotionAcc=1000;
 
 //Angle estimation (and gyro)
 //The gyro weight for the complementary used for angle estimation
-const int32_t gyroAgWeight=80;
+const int32_t gyroAgWeight=90;
+const int32_t gyroAgWeightMax=100;
 //Times used for gyro re-calibration interval. Calibration happens if we have no-motion for these times.
 const uint32_t gyroRecalibrateTimeAg=1500;
 const uint32_t gyroRecalibrateTime=5000;
@@ -417,7 +441,7 @@ const uint32_t minSamplesBefore=1;
 const uint32_t minSamplesAfter=1;
 
 //Constants for accelerometer LP-filter
-volatile int32_t accNewWeight=20;
+volatile int32_t accNewWeight=15;
 const int32_t accNewWeightMax=100;
 
 /*
@@ -433,9 +457,6 @@ void mpu6050CalculateEvents()
 	static uint32_t lastCallTime=0;
 	static int32_t gyroAgXZLast=0;
 	static int32_t gyroAgYZLast=0;
-	static accVals_t accValsLP;		//Low-pass-filtered acceleration values
-	static accVals_t accValsLast;	//Acceleration vals in milliG from last iteration
-	static gyroVals_t gyroValsLast;	//Gyro vals in deg/s from last iteration
 
 	static uint32_t nextGyroCalibTimeForAg=0;
 	int32_t td=0;
@@ -448,42 +469,23 @@ void mpu6050CalculateEvents()
 	if(!lastCallTime)
 	{
 		lastCallTime=systemTime;
-		gyroValsLast.roll=0;
-		gyroValsLast.pitch=0;
-		gyroValsLast.yaw=0;
-		accValsLast.accX=0;
-		accValsLast.accY=0;
-		accValsLast.accZ=0;
-		accValsLP.accX=0;
-		accValsLP.accY=0;
-		accValsLP.accZ=0;
 	}
 	td=systemTime-lastCallTime;
 	lastCallTime=systemTime;
-
-
 	{
 		IMUVals_t tmp;
 		//Includes offset
 		getLatestIMURingBufferData(&tmp);
 		//mpu6050GetAllValuesStruct(&test,true);
 		//mpu6050TransmitRaw(true,true);
-
 		accVals.accX=(int32_t)tmp.accX;
 		accVals.accY=(int32_t)tmp.accY;
 		accVals.accZ=(int32_t)tmp.accZ;
-
-		accValsLP.accX = (accVals.accX*accNewWeight + (accNewWeightMax-accNewWeight)*accValsLP.accX) / accNewWeightMax;
-		accValsLP.accY = (accVals.accY*accNewWeight + (accNewWeightMax-accNewWeight)*accValsLP.accY) / accNewWeightMax;
-		accValsLP.accZ = (accVals.accZ*accNewWeight + (accNewWeightMax-accNewWeight)*accValsLP.accZ) / accNewWeightMax;
-
 		gyroVals.roll=(int32_t)tmp.roll;
 		gyroVals.yaw=(int32_t)tmp.yaw;
 		gyroVals.pitch=(int32_t)tmp.pitch;
 	}
-	//mpu6050TransmitRaw(true);
 	int32_t totalAccVector=calculateTotalForceVectorStruct(&accVals);
-	//uartSendKeyVal("Vect",totalAccVector,true);
 
 
 	/*
@@ -510,12 +512,13 @@ void mpu6050CalculateEvents()
 	//Angle estimation based on acceleration reading
 	//Create trim accelerations to avoid weird edge-cases with atan and ignore strange angles
 	accVals_t accSafe;
-	accSafe.accX=accValsLP.accX;
-	accSafe.accY=accValsLP.accY;
-	accSafe.accZ=accValsLP.accZ;
+	accSafe.accX=IMURingBufferLP.accX;	//accValsLP.accX;
+	accSafe.accY=IMURingBufferLP.accY;	//accValsLP.accY;
+	accSafe.accZ=IMURingBufferLP.accZ;	//accValsLP.accZ;
 	//Todo: Might want to trim these more later
 	const int16_t smallestValueXY=150;
 	const int16_t smallestValueZ=30;
+	//If the absolute angle is too large, set the angle to 180. We will ignore the sign, because -180 and 180 are the same angle
 	const int16_t largestAngle=150;
 	if(abs(accVals.accX) < smallestValueXY && (abs(accVals.accY) > (notMotionAcc-smallestValueXY)))
 	{
@@ -533,20 +536,20 @@ void mpu6050CalculateEvents()
 	int16_t accAgXZ = (int16_t)(roundf(atan2f((float)accSafe.accX,(float)accSafe.accZ)*180.0/PI));
 	if(abs(accAgXZ)>largestAngle)
 	{
-		accAgXZ=0;
+		accAgXZ=180;
 	}
 	//The angle towards the ground during tilt around the X axis (front/back)
 	int16_t accAgYZ = (int16_t)(roundf(atan2f((float)accSafe.accY,(float)accSafe.accZ)*180.0/PI));
 	if(abs(accAgYZ)>largestAngle)
 	{
-		accAgYZ=0;
+		accAgYZ=180;
 	}
 
 	//Calculate angles based on gyro
 	//The gyro angles are in milli deg (to avoid floating point and precision losses)
-	int32_t gyroAgXZ = gyroAgXZLast + td*(gyroVals.roll+gyroValsLast.roll)/2;
+	int32_t gyroAgXZ = gyroAgXZLast + td*IMURingBufferLP.roll;
 	gyroAgXZLast=gyroAgXZ;
-	int32_t gyroAgYZ = gyroAgYZLast + td*(gyroVals.pitch+gyroValsLast.pitch)/2;
+	int32_t gyroAgYZ = gyroAgYZLast + td*IMURingBufferLP.pitch;
 	gyroAgYZLast=gyroAgYZ;
 	//Whenever we're not moving, set the last angle to whatever the accelerometer says the last angle, to avoid strange buildup (the gyro is mostly good when moving)
 	if(motionEvents[MTN_EVT_NO_MOTION_ALL].active && \
@@ -560,14 +563,15 @@ void mpu6050CalculateEvents()
 
 	//Add the angles from gyro and accelerometer together in a complementary filter
 	//The division by 1000 because the time step is in ms, rather than s
-	int32_t agXZ = ((gyroAgWeight*gyroAgXZ)/1000 + (100-gyroAgWeight)*accAgXZ)/100;
-	int32_t agYZ = ((gyroAgWeight*gyroAgYZ)/1000 + (100-gyroAgWeight)*accAgYZ)/100;
+	int32_t agXZ = ((gyroAgWeight*gyroAgXZ)/1000 + (gyroAgWeightMax-gyroAgWeight)*accAgXZ)/gyroAgWeightMax;
+	int32_t agYZ = ((gyroAgWeight*gyroAgYZ)/1000 + (gyroAgWeightMax-gyroAgWeight)*accAgYZ)/gyroAgWeightMax;
 	//Save angles to the state variable
 	agEst.roll=agXZ;
 	agEst.pitch=agYZ;
 
 	//Transmit angle data for debugging purposes
 	//Multiple angle by 10 to get a reasonable scale
+	//mpu6050TransmitRaw(true,false);
 	/*int32_t agVals1[3];
 	int32_t agVals2[3];
 	agVals1[0]=10*accAgXZ;
@@ -768,7 +772,6 @@ void mpu6050CalculateEvents()
 	 */
 
 
-
 	//If no motion has been active for a long time, reset the gyro offset to current value
 	if(eventGetActiveForMoreThan(&motionEvents[MTN_EVT_NO_MOTION_ALL],gyroRecalibrateTime) && \
 			motionEvents[MTN_EVT_NO_MOTION_ALL].counter >= motionEvents[MTN_EVT_NO_MOTION_ALL].threshold)
@@ -778,14 +781,6 @@ void mpu6050CalculateEvents()
 		mpu6050SetOffset(AXIS_PITCH,IMUVals[AXIS_PITCH],false);
 		mpu6050SetOffset(AXIS_YAW,IMUVals[AXIS_YAW],false);
 	}
-
-	//Update last values, when they have all been used
-	gyroValsLast.roll = gyroVals.roll;
-	gyroValsLast.pitch = gyroVals.pitch;
-	gyroValsLast.yaw = gyroVals.yaw;
-	accValsLast.accX = accVals.accX;
-	accValsLast.accY = accVals.accY;
-	accValsLast.accZ = accVals.accZ;
 }
 
 
@@ -849,8 +844,8 @@ void mpu6050Task()
 				mpu6050CalculateEvents();
 			}
 			//Transmit all the values through UART
-			//mpu6050TransmitRaw(true,true);
-			mpu6050TransmitDataProcessed(true,true);
+			mpu6050TransmitRaw(true,true);
+			//mpu6050TransmitDataProcessed(true,true);
 
 		}
 	}
@@ -889,21 +884,28 @@ uint32_t calculateTotalForceVector(int32_t* val)
 /*
  * Updates the ring buffer with new values
  * Purely dependent on the current state
+ * If doCalculations is given, it will perform some additional calculations (find max and some average)
  */
-static void updateIMURingBuffer(IMUVals_t* newdata, bool findMax)
+static void updateIMURingBuffer(IMUVals_t* newdata, bool doCalculations)
 {
 	IMURingBufIndex=utilIncLoopSimple(IMURingBufIndex,IMU_BUFFER_LEN-1);
 	memcpy(&IMURingBuffer[IMURingBufIndex],newdata,sizeof(IMUVals_t));
 
 	//Update max amplitude values for each axis
 	//Make sure to reset all values before going through
-	if(!findMax)
+	if(!doCalculations)
 	{
 		return;
 	}
 	memset(&IMURingBufferMax,0,sizeof(IMUVals));
+	//Uses the acc/gyro vals structs, because they are int32
+	accVals_t valsTotTmpAcc={0,0,0};
+	gyroVals_t valsTotTmpGyro={0,0,0};
+	IMUVals_t* tmpData;
+	uint8_t tmpBufInd=IMURingBufIndex;
 	for(uint8_t i=0; i<IMU_BUFFER_LEN;i++)
 	{
+		//Find max values
 		if(abs(IMURingBuffer[i].accX)>abs(IMURingBufferMax.accX))
 		{
 			IMURingBufferMax.accX=IMURingBuffer[i].accX;
@@ -934,7 +936,30 @@ static void updateIMURingBuffer(IMUVals_t* newdata, bool findMax)
 			IMURingBufferMax.yaw=IMURingBuffer[i].yaw;
 			IMURingBufferMaxIndex.yaw = i;
 		}
+
+		//Calculate total for average value
+		tmpData=&IMURingBuffer[tmpBufInd];
+		if(i<LPSamplesAcc)
+		{
+			valsTotTmpAcc.accX+=tmpData->accX;
+			valsTotTmpAcc.accY+=tmpData->accY;
+			valsTotTmpAcc.accZ+=tmpData->accZ;
+		}
+		if(i<LPSamplesGyro)
+		{
+			valsTotTmpGyro.roll+=tmpData->roll;
+			valsTotTmpGyro.pitch+=tmpData->pitch;
+			valsTotTmpGyro.yaw+=tmpData->yaw;
+		}
+		utilDecLoopSimple(tmpBufInd,IMU_BUFFER_LEN-1);
 	}
+	//Calculate average
+	IMURingBufferLP.accX = valsTotTmpAcc.accX/LPSamplesAcc;
+	IMURingBufferLP.accY = valsTotTmpAcc.accY/LPSamplesAcc;
+	IMURingBufferLP.accZ = valsTotTmpAcc.accZ/LPSamplesAcc;
+	IMURingBufferLP.roll = valsTotTmpGyro.roll/LPSamplesGyro;
+	IMURingBufferLP.pitch = valsTotTmpGyro.pitch/LPSamplesGyro;
+	IMURingBufferLP.yaw = valsTotTmpGyro.yaw/LPSamplesGyro;
 }
 
 /*

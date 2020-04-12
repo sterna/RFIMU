@@ -84,7 +84,6 @@ void uart1Init(unsigned long baud)
 	//Setup xprintf etc
 	xdev_out(uartPutc);
 	xdev_in(uartGetc);
-
 }
 
 /*
