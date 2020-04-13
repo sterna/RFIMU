@@ -102,7 +102,7 @@ typedef struct{
 }angles_t;
 
 void mpu6050Init();
-void mpu6050Process();
+void mpu6050Task();
 void mpu6050SetOffset(uint8_t axis, int16_t val, bool isG);
 void mpu6050ResetAllOffsets();
 void mpu6050SetOffsetsToCurrent(uint8_t axisTo1G);

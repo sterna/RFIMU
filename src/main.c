@@ -159,7 +159,7 @@ static void dummyLedTask();
 void displayBattery(uint8_t channel, uint8_t segment, uint16_t startLED);
 void handleApplicationSimple();
 
-#define GLOBAL_SETTING	4
+#define GLOBAL_SETTING	3
 #define UGLY_MODE_CHANGE_TIME	10000
 
 #define PULSE_FAST_PIXEL_TIME	1
@@ -176,7 +176,6 @@ uint8_t segment1Up=0;	//45 LEDs
 uint8_t segment2Down=0;	//44 LEDs
 uint8_t segment3Up=0;	//44 LEDs
 
-static volatile IMUVals_t imuVals;
 volatile uint16_t batteryIndicatorStartLed=40;	//There are 156 and 157 LEDs on each side
 
 int main(int argc, char* argv[])

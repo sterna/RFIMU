@@ -54,6 +54,10 @@ void swInit()
 	GPIO_Init(SW1_PORT,&GPIOInitStruct);
 	GPIOInitStruct.GPIO_Pin =  (1<<SW2_PIN);
 	GPIO_Init(SW2_PORT,&GPIOInitStruct);
+	for(uint8_t i=0;i<SW_NOF_SWITCHES;i++)
+	{
+		switches[i].threshold=SW_DEBOUNCE_COUNTER_TOP;
+	}
 }
 
 /*

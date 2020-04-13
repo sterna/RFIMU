@@ -31,7 +31,9 @@ static const int8_t IMUAxisInversions[AXIS_NOF]={1,1,1,-1,1,1};
 
 //Contains the constant offset seen for different values (calibrated against earth gravity)
 //Offsets are in milli g and deg/s respectively
-const int16_t IMUFactoryOffsets[AXIS_NOF]={-10,0,80,0,0,0};
+
+static const int16_t IMUFactoryOffsets[AXIS_NOF]={-15,-15,-30,0,0,0};
+//const int16_t IMUFactoryOffsets[AXIS_NOF]={-10,0,80,0,0,0};	//Set used for the other unit
 
 //Indicated which motion events are true. Motion events bits are defined in
 static eventState_t motionEvents[MTN_NOF_EVENTS];
