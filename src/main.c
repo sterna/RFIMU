@@ -18,13 +18,10 @@
 #include "extFetCtrl.h"
 #include "onboardLedCtrl.h"
 #include "adc.h"
+#include "advancedAnimations.h"
 
 bool poorMansOS();
 void poorMansOSRunAll();
-
-#define LED_BOARD_SET()		GPIOC->BRR = GPIO_Pin_13
-#define LED_BOARD_CLEAR()	GPIOC->BSRR = GPIO_Pin_13
-#define LED_BOARD_TOGGLE()	GPIOC->ODR ^= GPIO_Pin_13
 
 // Sample pragmas to cope with warnings. Please note the related line at
 // the end of this function, used to pop the compiler diagnostics status.
@@ -32,22 +29,6 @@ void poorMansOSRunAll();
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wmissing-declarations"
 #pragma GCC diagnostic ignored "-Wreturn-type"
-
-typedef enum
-{
-	MODE_NORMAL=0,
-	MODE_CHARGE,	//Carebearstare!
-	MODE_LOW_POWER,
-	MODE_DISCO,
-	MODE_STROBE,
-	MODE_PRIDE,
-	MODE_OFF,
-	MODE_NOF_MODES,
-	MODE_HANDBLAST1,
-	MODE_HANDBLAST2,
-	MODE_ANGRY_RED,
-	MODE_STROBE_TERRIBLE
-}prog_mode_t;
 
 typedef enum
 {
@@ -72,60 +53,18 @@ typedef enum
 }discoCols_t;
 
 #define DISCO_NOF_COLORS	(DISCO_COL_NOF_COLOURS-2)
-/*
- * CH5: legs
- * CH4: right arm
- * CH3: left arm
- * CH2: chest
- * CH1: head
- */
-led_fade_setting_t setting_normal={50,150,100,400,100,500,2500,0,0};
-led_fade_setting_t setting_charge={200,400,500,800,500,800,750,0,0};
-led_fade_setting_t setting_low_power={50,100,100,300,100,300,2500,0,0};
-led_fade_setting_t setting_handblast1={50,200,150,600,150,600,250,0,8};
-led_fade_setting_t setting_handblast2={100,400,300,900,300,900,250,0,1};
-led_fade_setting_t setting_angry_red={50,600,0,0,0,0,750,0,1};
+
 
 led_fade_setting_t setting_disco[DISCO_NOF_COLORS]=
 {
-{0,500,0,0,0,500,1000,0,1},	//Purple
-{0,0,0,500,0,500,1000,0,1},	//Cyan
-{0,600,0,400,0,0,1000,0,1},	//"Yellow"	(Trimmed, a little, since it was very greenish)
-{0,500,0,500,0,500,1000,0,1},	//White
-{0,500,0,0,0,0,1000,0,1},		//Red
-{0,0,0,500,0,0,1000,0,1},		//Green
-{0,0,0,0,0,500,1000,0,1}		//Blue
+{0,500,0,0,0,500},		//Purple
+{0,0,0,500,0,500},		//Cyan
+{0,600,0,400,0,0},		//"Yellow"	(Trimmed, a little, since it was very greenish)
+{0,500,0,500,0,500},	//White
+{0,500,0,0,0,0},		//Red
+{0,0,0,500,0,0},		//Green
+{0,0,0,0,0,500}			//Blue
 };
-
-
-led_fade_setting_t setting_strobe[DISCO_NOF_COLORS]=
-{
-{0,500,0,0,0,500,200,0,1},	//Purple
-{0,0,0,500,0,500,200,0,1},	//Cyan
-{0,500,0,500,0,0,200,0,1},	//"Yellow"
-{0,500,0,500,0,500,200,0,1},	//White
-{0,500,0,0,0,0,200,0,1},		//Red
-{0,0,0,500,0,0,200,0,1},		//Green
-{0,0,0,0,0,500,200,0,1}		//Blue
-};
-
-led_fade_setting_t seeting_white_strobe={0,1000,0,1000,0,1000,250,0,0};
-
-#define PRIDE_NOF_COLORS 5
-led_fade_setting_t setting_pride[PRIDE_NOF_COLORS]=
-{
-{20,500,0,0,0,00,1000,0,0},		//Red
-{100,600,20,300,0,0,1000,0,0},	//Yellow
-{0,0,20,500,0,0,1000,0,0},		//Green
-{0,0,0,0,20,500,1000,0,0},		//Blue
-{20,500,0,0,20,400,1000,0,0},	//Purple
-};
-
-#define PWR_LOW (uint16_t)(250)
-#define PWR_MID (uint16_t)(500)
-#define PWR_HI (uint16_t)(750)
-
-#define NOF_LEDS 300
 
 /*
  * Simple interface:
@@ -152,7 +91,6 @@ typedef enum
 }simpleModes_t;
 
 void generateColor(led_fade_setting_t* s);
-void loadMode(prog_mode_t mode);
 void loadLedSegFadeColour(discoCols_t col,ledSegmentFadeSetting_t* st);
 void loadLedSegPulseColour(discoCols_t col,ledSegmentPulseSetting_t* st);
 static void dummyLedTask();
@@ -227,13 +165,23 @@ void handleApplicationSimple()
 	if(!setupDone)
 	{
 		loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
-		pulse.cycles =0;
+		/*pulse.cycles =0;
 		pulse.ledsFadeAfter = 5;
 		pulse.ledsFadeBefore = 5;
 		pulse.ledsMaxPower = 15;
 		pulse.mode = LEDSEG_MODE_LOOP_END;
 		pulse.pixelTime = PULSE_NORMAL_PIXEL_TIME;
 		pulse.pixelsPerIteration = 2;
+		pulse.startDir =1;
+		pulse.startLed = 1;*/
+
+		pulse.cycles =0;
+		pulse.ledsFadeAfter = 5;
+		pulse.ledsFadeBefore = 5;
+		pulse.ledsMaxPower = 25;
+		pulse.mode = LEDSEG_MODE_GLITTER_BOUNCE;
+		pulse.pixelTime = 1000;
+		pulse.pixelsPerIteration = 5;
 		pulse.startDir =1;
 		pulse.startLed = 1;
 
@@ -243,11 +191,11 @@ void handleApplicationSimple()
 		fade.startDir = -1;
 		fade.fadeTime = 700;
 		apa102SetDefaultGlobal(4);
-		segment1Up=ledSegInitSegment(1,2,45,&pulse,&fade);	//Skip the first LED to sync up the pulses
-		segment3Up=ledSegInitSegment(1,90,133,&pulse,&fade);
-		pulse.startDir=-1;
-		pulse.startLed = 100;
-		segment2Down=ledSegInitSegment(1,46,89,&pulse,&fade);
+		segment1Up=ledSegInitSegment(1,2,45,false, &pulse,&fade);	//Skip the first LED to sync up the pulses
+		segment2Down=ledSegInitSegment(1,46,89,true,&pulse,&fade);
+		segment3Up=ledSegInitSegment(1,90,133,false, &pulse,&fade);
+		//pulse.startDir=-1;
+		//pulse.startLed = 100;
 		setupDone=true;
 	}
 
@@ -259,99 +207,95 @@ void handleApplicationSimple()
 		//Handles if something needs to be done when changing from a state
 		switch(smode)
 		{
-		case SMODE_DISCO:
-		{
-			pulse.pixelTime=PULSE_NORMAL_PIXEL_TIME;
-			fade.fadeTime=FADE_NORMAL_TIME;
-			break;
-		}
-		default:
-		{
-			//Do nothing for default
-		}
-		}
-		smode++;
-		if(smode>=SMODE_NOF_MODES)
-		{
-			smode=0;
-		}
-		switch(smode)
-		{
-		case SMODE_BLUE_FADE_YLW_PULSE:
-			loadLedSegFadeColour(DISCO_COL_BLUE,&fade);
-			loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
-			break;
-		case SMODE_CYAN_FADE_YLW_PULSE:
-			loadLedSegFadeColour(DISCO_COL_CYAN,&fade);
-			loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
-			break;
-		case SMODE_YLW_FADE_GREEN_PULSE:
-			loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
-			loadLedSegPulseColour(DISCO_COL_GREEN,&pulse);
-			break;
-		case SMODE_RED_FADE_YLW_PULSE:
-			loadLedSegFadeColour(DISCO_COL_RED,&fade);
-			loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
-			break;
-		case SMODE_YLW_FADE_PURPLE_PULSE:
-			loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
-			loadLedSegPulseColour(DISCO_COL_PURPLE,&pulse);
-			break;
-		case SMODE_CYAN_FADE_NO_PULSE:
-			loadLedSegFadeColour(DISCO_COL_CYAN,&fade);
-			pulseIsActive=false;
-			break;
-		case SMODE_YLW_FADE_NO_PULSE:
-			loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
-			pulseIsActive=false;
-			break;
-		case SMODE_RED_FADE_NO_PULSE:
-			loadLedSegFadeColour(DISCO_COL_RED,&fade);
-			pulseIsActive=false;
-			break;
-		case SMODE_DISCO:
-			pulse.pixelTime=PULSE_FAST_PIXEL_TIME;
-			fade.fadeTime=FADE_FAST_TIME;	//The break is omitted by design, since SMODE_DISCO does the same thing as SMODE_RANDOM
-		case SMODE_RANDOM:
-			loadLedSegFadeColour(DISCO_COL_RANDOM,&fade);
-			loadLedSegPulseColour(DISCO_COL_RANDOM,&pulse);
-			break;
-		case SMODE_BATTERY_DISP:
-		{
-			//Do nothing here
-			break;
-		}
-		case SMODE_OFF:	//turn LEDs off
-		{
-			fade.r_min=0;
-			fade.r_max=0;
-			fade.g_min=0;
-			fade.g_max=0;
-			fade.b_min=0;
-			fade.b_max=0;
-			pulse.r_max=0;
-			pulse.g_max=0;
-			pulse.b_max=0;
-			break;
-		}
-		case SMODE_NOF_MODES:	//Should never happen
-		{
-			smode=0;
-			break;
-		}
+			case SMODE_DISCO:
+			{
+				pulse.pixelTime=1000;//PULSE_NORMAL_PIXEL_TIME;
+				fade.fadeTime=FADE_NORMAL_TIME;
+				break;
+			}
+			default:
+			{
+				//Do nothing for default
+			}
+			}
+			smode++;
+			if(smode>=SMODE_NOF_MODES)
+			{
+				smode=0;
+			}
+			switch(smode)
+			{
+			case SMODE_BLUE_FADE_YLW_PULSE:
+				animLoadLedSegFadeColour(SIMPLE_COL_BLUE,&fade,25,200);
+				animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,150);
+				break;
+			case SMODE_CYAN_FADE_YLW_PULSE:
+				animLoadLedSegFadeColour(SIMPLE_COL_CYAN,&fade,25,150);
+				animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,150);
+				break;
+			case SMODE_RED_FADE_YLW_PULSE:
+				animLoadLedSegFadeBetweenColours(SIMPLE_COL_RED,SIMPLE_COL_BLUE,&fade,150,150);
+				animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,150);
+				break;
+			case SMODE_YLW_FADE_PURPLE_PULSE:
+				animLoadLedSegFadeBetweenColours(SIMPLE_COL_CYAN,SIMPLE_COL_PURPLE,&fade,50,150);
+				animLoadLedSegPulseColour(SIMPLE_COL_PURPLE,&pulse,150);
+				break;
+			case SMODE_YLW_FADE_GREEN_PULSE:
+				animLoadModeChange(SIMPLE_COL_GREEN,&fade,segment1Up,true,50,150);
+				animLoadLedSegPulseColour(SIMPLE_COL_BLUE,&pulse,150);
+				break;
+			case SMODE_CYAN_FADE_NO_PULSE:
+				animLoadModeChange(SIMPLE_COL_RED,&fade,segment1Up,false,50,150);
+				pulseIsActive=false;
+				break;
+			case SMODE_YLW_FADE_NO_PULSE:
+				loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
+				pulseIsActive=false;
+				break;
+			case SMODE_RED_FADE_NO_PULSE:
+				loadLedSegFadeColour(DISCO_COL_RED,&fade);
+				pulseIsActive=false;
+				break;
+			case SMODE_DISCO:
+				pulse.pixelTime=500;//PULSE_FAST_PIXEL_TIME;
+				fade.fadeTime=FADE_FAST_TIME;	//The break is omitted by design, since SMODE_DISCO does the same thing as SMODE_RANDOM
+			case SMODE_RANDOM:
+				loadLedSegFadeColour(DISCO_COL_RANDOM,&fade);
+				loadLedSegPulseColour(DISCO_COL_RANDOM,&pulse);
+				break;
+			case SMODE_BATTERY_DISP:
+			{
+				//Do nothing here
+				break;
+			}
+			case SMODE_OFF:	//turn LEDs off
+			{
+				fade.r_min=0;
+				fade.r_max=0;
+				fade.g_min=0;
+				fade.g_max=0;
+				fade.b_min=0;
+				fade.b_max=0;
+				pulse.r_max=0;
+				pulse.g_max=0;
+				pulse.b_max=0;
+				break;
+			}
+			case SMODE_NOF_MODES:	//Should never happen
+			{
+				smode=0;
+				break;
+			}
 		}
 
 		//Update all segements
 		ledSegSetFade(segment1Up,&fade);
 		ledSegSetFade(segment2Down,&fade);
 		ledSegSetFade(segment3Up,&fade);
-		pulse.startDir=1;
-		pulse.startLed =1;
 		ledSegSetPulse(segment1Up,&pulse);
-		ledSegSetPulse(segment3Up,&pulse);
-		pulse.startDir=-1;
-		pulse.startLed =100;
 		ledSegSetPulse(segment2Down,&pulse);
+		ledSegSetPulse(segment3Up,&pulse);
 		ledSegSetPulseActiveState(segment1Up,pulseIsActive);
 		ledSegSetPulseActiveState(segment2Down,pulseIsActive);
 		ledSegSetPulseActiveState(segment3Up,pulseIsActive);
@@ -406,13 +350,9 @@ void handleApplicationSimple()
 				ledSegSetFade(segment1Up,&fade);
 				ledSegSetFade(segment2Down,&fade);
 				ledSegSetFade(segment3Up,&fade);
-				pulse.startDir=1;
-				pulse.startLed =1;
 				ledSegSetPulse(segment1Up,&pulse);
-				ledSegSetPulse(segment3Up,&pulse);
-				pulse.startDir=-1;
-				pulse.startLed =100;
 				ledSegSetPulse(segment2Down,&pulse);
+				ledSegSetPulse(segment3Up,&pulse);
 				ledSegSetPulseActiveState(segment1Up,pulseIsActive);
 				ledSegSetPulseActiveState(segment2Down,pulseIsActive);
 				ledSegSetPulseActiveState(segment3Up,pulseIsActive);
@@ -509,6 +449,24 @@ static void dummyLedTask()
 	}
 }
 
+/*
+ * Sets up a mode where you switch from one mode to another (soft fade between the two fade colours)
+ */
+void loadModeChange(discoCols_t col, ledSegmentFadeSetting_t* st, uint8_t segment)
+{
+	//Load the setting as normal (will give us the max setting, as fade by default starts from max)
+	loadLedSegFadeColour(col,st);
+
+	//Get the colour of the current state to know what to move from
+	ledSegment_t currentSeg;
+	ledSegGetState(segment,&currentSeg);
+	st->r_min = currentSeg.state.r;
+	st->g_min = currentSeg.state.g;
+	st->b_min = currentSeg.state.b;
+	st->cycles=1;
+	st->startDir=1;
+}
+
 #define MAX_DIVISOR	4
 #define MIN_MAX_DIVISOR	3
 
@@ -542,6 +500,24 @@ void loadLedSegFadeColour(discoCols_t col,ledSegmentFadeSetting_t* st)
 	st->g_min = st->g_max/MIN_MAX_DIVISOR;
 	st->b_max = tmpSet.b_max/MAX_DIVISOR;
 	st->b_min = st->b_max/MIN_MAX_DIVISOR;
+}
+
+/*
+ * Sets up a fade from one colour to another one
+ */
+void loadLedSegFadeBetweenColours(discoCols_t colFrom, discoCols_t colTo, ledSegmentFadeSetting_t* st)
+{
+	ledSegmentFadeSetting_t settingFrom;
+	ledSegmentFadeSetting_t settingTo;
+	//Fetch colours into two settings (it's probably easier to do it like this)
+	loadLedSegFadeColour(colFrom,&settingFrom);
+	loadLedSegFadeColour(colTo,&settingTo);
+	st->r_min = settingFrom.r_max;
+	st->r_max = settingTo.r_max;
+	st->g_min = settingFrom.g_max;
+	st->g_max = settingTo.g_max;
+	st->b_min = settingFrom.b_max;
+	st->b_max = settingTo.b_max;
 }
 
 /*
@@ -623,10 +599,10 @@ void handleModes()
 	//Temp variables used to contain various settings
 	ledSegmentFadeSetting_t* fdSet;
 	ledSegmentPulseSetting_t* puSet;
-	ledSegmentState_t st;
-	ledSegGetState(segmentTail,&st);
-	fdSet=&(st.confFade);
-	puSet=&(st.confPulse);
+	ledSegment_t fullSeg;
+	ledSegGetState(segmentTail,&fullSeg);
+	fdSet=&(fullSeg.state.confFade);
+	puSet=&(fullSeg.state.confPulse);
 	//Check if we should change mode
 	if(synchMode == false && swGetFallingEdge(SW_MODE))
 	{
@@ -753,49 +729,6 @@ void generateColor(led_fade_setting_t* s)
 	s->r_max = utilRandRange(COLOR_MAX);
 	s->g_max = utilRandRange(COLOR_MAX);
 	s->b_max = utilRandRange(COLOR_MAX);
-}
-
-
-
-void loadMode(prog_mode_t mode)
-{
-	switch(mode)
-	{
-	case MODE_NORMAL:
-		ledFadeSetup(&setting_normal,0);
-		break;
-	case MODE_CHARGE:
-		ledFadeSetup(&setting_charge,0);
-		break;
-	case MODE_LOW_POWER:
-		ledFadeSetup(&setting_low_power,0);
-		break;
-	case MODE_DISCO:
-		ledFadeSetup(&(setting_disco[0]),0);
-		break;
-	case MODE_STROBE:
-		ledFadeSetup(&(setting_strobe[0]),0);
-		break;
-	case MODE_PRIDE:
-		for (uint8_t i=1;i<=LED_PWM_NOF_CHANNELS;i++)
-		{
-			ledFadeSetup(&(setting_pride[i-1]),i);
-		}
-		break;
-	case MODE_OFF:
-		//Clear all channels
-		ledPwmUpdateColours(0,0,0,0);
-		ledFadeSetActive(0,false);
-		break;
-	case MODE_STROBE_TERRIBLE:
-	case MODE_NOF_MODES:
-	case MODE_HANDBLAST1:
-	case MODE_HANDBLAST2:
-	case MODE_ANGRY_RED:
-
-		//This should actually never happen (but impressive that gcc notices this)
-		break;
-	}
 }
 
 static volatile bool mutex=false;

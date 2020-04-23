@@ -4,6 +4,7 @@
  *	Created on: 6 feb. 2016
  *		Author: root
  */
+
 #ifndef LEDPWM_H_
 #define LEDPWM_H_
 
@@ -59,9 +60,6 @@ typedef struct
 	uint32_t g_max;
 	uint32_t b_min;
 	uint32_t b_max;
-	uint32_t fade_time_ms;
-	uint8_t channel;	//Channel to use. If =0, all channels are used
-	uint32_t cycles;	//If cycles=0, it will run forever (or rather for max uint32 cycles)
 }led_fade_setting_t;
 
 typedef struct

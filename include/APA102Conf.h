@@ -119,9 +119,8 @@
 //Set REMAP_CONFIG to correct remap, if needed. Set to 0 if remap is not needed
 #define APA3_REMAP_CONFIG	0
 
-//Settings for specific LED colour corrections (hard-ware driven).
 
-
+//Here, the totality of the led correction is documented
 #define APA_SCALE_ASSIGN {APA_SCALE}
 
 #endif /* APA102CONF_H_ */

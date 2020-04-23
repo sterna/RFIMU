@@ -5,6 +5,7 @@
  *		Author: Sterna
  */
 
+#if 0
 #include "ledPwm.h"
 
 static led_fade_state_t* getLedState(uint8_t ch);
@@ -395,3 +396,5 @@ bool ledFadeGetState(uint8_t ch)
 {
 	return getLedState(ch)->active;
 }
+
+#endif
