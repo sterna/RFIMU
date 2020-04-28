@@ -191,9 +191,12 @@ void handleApplicationSimple()
 		fade.startDir = -1;
 		fade.fadeTime = 700;
 		apa102SetDefaultGlobal(4);
-		segment1Up=ledSegInitSegment(1,2,45,false, &pulse,&fade);	//Skip the first LED to sync up the pulses
-		segment2Down=ledSegInitSegment(1,46,89,true,&pulse,&fade);
-		segment3Up=ledSegInitSegment(1,90,133,false, &pulse,&fade);
+		segment1Up=ledSegInitSegment(1,2,15,false, &pulse,&fade);	//Skip the first LED to sync up the pulses
+		segment2Down=ledSegInitSegment(1,16,30,true,&pulse,&fade);
+		segment3Up=ledSegInitSegment(1,31,133,false, &pulse,&fade);
+		//segment1Up=ledSegInitSegment(1,2,45,false, &pulse,&fade);	//Skip the first LED to sync up the pulses
+		//segment2Down=ledSegInitSegment(1,46,89,true,&pulse,&fade);
+		//segment3Up=ledSegInitSegment(1,90,133,false, &pulse,&fade);
 		//pulse.startDir=-1;
 		//pulse.startLed = 100;
 		setupDone=true;
@@ -202,6 +205,8 @@ void handleApplicationSimple()
 	//Change mode
 	if(swGetFallingEdge(1) || uglyModeChange)
 	{
+		bool fadeAlreadySet=false;
+		bool pulseAlreadySet=false;
 		pulseIsActive=true;
 		uglyModeChange=false;
 		//Handles if something needs to be done when changing from a state
@@ -217,40 +222,62 @@ void handleApplicationSimple()
 			{
 				//Do nothing for default
 			}
-			}
-			smode++;
-			if(smode>=SMODE_NOF_MODES)
-			{
-				smode=0;
-			}
-			switch(smode)
-			{
+		}
+		smode++;
+		if(smode>=SMODE_NOF_MODES)
+		{
+			smode=0;
+		}
+		switch(smode)
+		{
 			case SMODE_BLUE_FADE_YLW_PULSE:
 				animLoadLedSegFadeColour(SIMPLE_COL_BLUE,&fade,25,200);
 				animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,150);
 				break;
 			case SMODE_CYAN_FADE_YLW_PULSE:
-				animLoadLedSegFadeColour(SIMPLE_COL_CYAN,&fade,25,150);
-				animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,150);
+				animSetModeChange(SIMPLE_COL_GREEN,&fade,LEDSEG_ALL,true,50,150);
+				//animSetModeChange(SIMPLE_COL_GREEN,&fade,segment1Up,true,50,150);
+				//animSetModeChange(SIMPLE_COL_GREEN,&fade,segment2Down,true,50,150);
+				//animSetModeChange(SIMPLE_COL_GREEN,&fade,segment3Up,true,50,150);
+				fadeAlreadySet=true;
+				pulseIsActive=false;
+				//animLoadLedSegPulseColour(SIMPLE_COL_BLUE,&pulse,150);
+				//animLoadLedSegFadeColour(SIMPLE_COL_CYAN,&fade,25,150);
+				//animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,150);
 				break;
 			case SMODE_RED_FADE_YLW_PULSE:
 				animLoadLedSegFadeBetweenColours(SIMPLE_COL_RED,SIMPLE_COL_BLUE,&fade,150,150);
-				animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,150);
+				animSetModeChange(SIMPLE_COL_NO_CHANGE,&fade,LEDSEG_ALL,false,0,0);
+				fadeAlreadySet=true;
+				pulseIsActive=false;
+				//animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,150);
 				break;
 			case SMODE_YLW_FADE_PURPLE_PULSE:
-				animLoadLedSegFadeBetweenColours(SIMPLE_COL_CYAN,SIMPLE_COL_PURPLE,&fade,50,150);
-				animLoadLedSegPulseColour(SIMPLE_COL_PURPLE,&pulse,150);
+				animLoadLedSegFadeBetweenColours(SIMPLE_COL_CYAN,SIMPLE_COL_YELLOW,&fade,100,100);
+				animSetModeChange(SIMPLE_COL_NO_CHANGE,&fade,LEDSEG_ALL,true,0,0);
+				//animLoadLedSegPulseColour(SIMPLE_COL_PURPLE,&pulse,150);
+				fadeAlreadySet=true;
+				pulseIsActive=false;
 				break;
 			case SMODE_YLW_FADE_GREEN_PULSE:
-				animLoadModeChange(SIMPLE_COL_GREEN,&fade,segment1Up,true,50,150);
-				animLoadLedSegPulseColour(SIMPLE_COL_BLUE,&pulse,150);
+				animSetModeChange(SIMPLE_COL_RED,&fade,LEDSEG_ALL,true,25,150);
+				//animSetModeChange(SIMPLE_COL_RED,&fade,segment2Down,true,50,150);
+				//animSetModeChange(SIMPLE_COL_RED,&fade,segment3Up,true,50,150);
+				fadeAlreadySet=true;
+				//animLoadLedSegPulseColour(SIMPLE_COL_BLUE,&pulse,110);
+				pulseIsActive=false;
 				break;
 			case SMODE_CYAN_FADE_NO_PULSE:
-				animLoadModeChange(SIMPLE_COL_RED,&fade,segment1Up,false,50,150);
+				animSetModeChange(SIMPLE_COL_CYAN,&fade,LEDSEG_ALL,false,50,150);
+				//animSetModeChange(SIMPLE_COL_CYAN,&fade,segment2Down,false,50,150);
+				//animSetModeChange(SIMPLE_COL_CYAN,&fade,segment3Up,false,50,150);
+				fadeAlreadySet=true;
 				pulseIsActive=false;
 				break;
 			case SMODE_YLW_FADE_NO_PULSE:
-				loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
+				//loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
+				animSetModeChange(SIMPLE_COL_YELLOW,&fade,LEDSEG_ALL,false,50,150);
+				fadeAlreadySet=true;
 				pulseIsActive=false;
 				break;
 			case SMODE_RED_FADE_NO_PULSE:
@@ -290,15 +317,21 @@ void handleApplicationSimple()
 		}
 
 		//Update all segements
-		ledSegSetFade(segment1Up,&fade);
-		ledSegSetFade(segment2Down,&fade);
-		ledSegSetFade(segment3Up,&fade);
-		ledSegSetPulse(segment1Up,&pulse);
-		ledSegSetPulse(segment2Down,&pulse);
-		ledSegSetPulse(segment3Up,&pulse);
-		ledSegSetPulseActiveState(segment1Up,pulseIsActive);
-		ledSegSetPulseActiveState(segment2Down,pulseIsActive);
-		ledSegSetPulseActiveState(segment3Up,pulseIsActive);
+		if(!fadeAlreadySet)
+		{
+			ledSegSetFade(segment1Up,&fade);
+			ledSegSetFade(segment2Down,&fade);
+			ledSegSetFade(segment3Up,&fade);
+		}
+		if(!pulseAlreadySet)
+		{
+			ledSegSetPulse(segment1Up,&pulse);
+			ledSegSetPulse(segment2Down,&pulse);
+			ledSegSetPulse(segment3Up,&pulse);
+			ledSegSetPulseActiveState(segment1Up,pulseIsActive);
+			ledSegSetPulseActiveState(segment2Down,pulseIsActive);
+			ledSegSetPulseActiveState(segment3Up,pulseIsActive);
+		}
 
 		if(smode == SMODE_BATTERY_DISP)
 		{
