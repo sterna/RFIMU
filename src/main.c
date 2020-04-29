@@ -189,7 +189,8 @@ void handleApplicationSimple()
 		fade.cycles =0;
 		fade.mode = LEDSEG_MODE_BOUNCE;
 		fade.startDir = -1;
-		fade.fadeTime = 700;
+		fade.fadeTime = 1500;
+		fade.syncGroup=1;
 		apa102SetDefaultGlobal(4);
 		segment1Up=ledSegInitSegment(1,2,15,false, &pulse,&fade);	//Skip the first LED to sync up the pulses
 		segment2Down=ledSegInitSegment(1,16,30,true,&pulse,&fade);
