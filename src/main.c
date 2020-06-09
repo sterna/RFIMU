@@ -164,7 +164,7 @@ void handleApplicationSimple()
 	static uint8_t globalSetting=GLOBAL_SETTING;
 	if(!setupDone)
 	{
-		loadLedSegPulseColour(DISCO_COL_YELLOW,&pulse);
+		animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,200);
 		/*pulse.cycles =0;
 		pulse.ledsFadeAfter = 5;
 		pulse.ledsFadeBefore = 5;
@@ -185,7 +185,8 @@ void handleApplicationSimple()
 		pulse.startDir =1;
 		pulse.startLed = 1;
 
-		loadLedSegFadeColour(DISCO_COL_BLUE,&fade);
+		animLoadLedSegFadeColour(SIMPLE_COL_BLUE,&fade,50,200);
+		//loadLedSegFadeColour(DISCO_COL_BLUE,&fade);
 		fade.cycles =0;
 		fade.mode = LEDSEG_MODE_BOUNCE;
 		fade.startDir = -1;
@@ -237,14 +238,8 @@ void handleApplicationSimple()
 				break;
 			case SMODE_CYAN_FADE_YLW_PULSE:
 				animSetModeChange(SIMPLE_COL_GREEN,&fade,LEDSEG_ALL,true,50,150);
-				//animSetModeChange(SIMPLE_COL_GREEN,&fade,segment1Up,true,50,150);
-				//animSetModeChange(SIMPLE_COL_GREEN,&fade,segment2Down,true,50,150);
-				//animSetModeChange(SIMPLE_COL_GREEN,&fade,segment3Up,true,50,150);
 				fadeAlreadySet=true;
 				pulseIsActive=false;
-				//animLoadLedSegPulseColour(SIMPLE_COL_BLUE,&pulse,150);
-				//animLoadLedSegFadeColour(SIMPLE_COL_CYAN,&fade,25,150);
-				//animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,150);
 				break;
 			case SMODE_RED_FADE_YLW_PULSE:
 				animLoadLedSegFadeBetweenColours(SIMPLE_COL_RED,SIMPLE_COL_BLUE,&fade,150,150);
@@ -262,35 +257,29 @@ void handleApplicationSimple()
 				break;
 			case SMODE_YLW_FADE_GREEN_PULSE:
 				animSetModeChange(SIMPLE_COL_RED,&fade,LEDSEG_ALL,true,25,150);
-				//animSetModeChange(SIMPLE_COL_RED,&fade,segment2Down,true,50,150);
-				//animSetModeChange(SIMPLE_COL_RED,&fade,segment3Up,true,50,150);
 				fadeAlreadySet=true;
-				//animLoadLedSegPulseColour(SIMPLE_COL_BLUE,&pulse,110);
 				pulseIsActive=false;
 				break;
 			case SMODE_CYAN_FADE_NO_PULSE:
 				animSetModeChange(SIMPLE_COL_CYAN,&fade,LEDSEG_ALL,false,50,150);
-				//animSetModeChange(SIMPLE_COL_CYAN,&fade,segment2Down,false,50,150);
-				//animSetModeChange(SIMPLE_COL_CYAN,&fade,segment3Up,false,50,150);
 				fadeAlreadySet=true;
 				pulseIsActive=false;
 				break;
 			case SMODE_YLW_FADE_NO_PULSE:
-				//loadLedSegFadeColour(DISCO_COL_YELLOW,&fade);
 				animSetModeChange(SIMPLE_COL_YELLOW,&fade,LEDSEG_ALL,false,50,150);
 				fadeAlreadySet=true;
 				pulseIsActive=false;
 				break;
 			case SMODE_RED_FADE_NO_PULSE:
-				loadLedSegFadeColour(DISCO_COL_RED,&fade);
+				animLoadLedSegFadeColour(SIMPLE_COL_RED,&fade,50,150);
 				pulseIsActive=false;
 				break;
 			case SMODE_DISCO:
 				pulse.pixelTime=500;//PULSE_FAST_PIXEL_TIME;
 				fade.fadeTime=FADE_FAST_TIME;	//The break is omitted by design, since SMODE_DISCO does the same thing as SMODE_RANDOM
 			case SMODE_RANDOM:
-				loadLedSegFadeColour(DISCO_COL_RANDOM,&fade);
-				loadLedSegPulseColour(DISCO_COL_RANDOM,&pulse);
+				animLoadLedSegFadeColour(SIMPLE_COL_RANDOM,&fade,100,200);
+				animLoadLedSegPulseColour(SIMPLE_COL_RANDOM,&pulse,200);
 				break;
 			case SMODE_BATTERY_DISP:
 			{
@@ -320,18 +309,12 @@ void handleApplicationSimple()
 		//Update all segements
 		if(!fadeAlreadySet)
 		{
-			ledSegSetFade(segment1Up,&fade);
-			ledSegSetFade(segment2Down,&fade);
-			ledSegSetFade(segment3Up,&fade);
+			ledSegSetFade(LEDSEG_ALL,&fade);
 		}
 		if(!pulseAlreadySet)
 		{
-			ledSegSetPulse(segment1Up,&pulse);
-			ledSegSetPulse(segment2Down,&pulse);
-			ledSegSetPulse(segment3Up,&pulse);
-			ledSegSetPulseActiveState(segment1Up,pulseIsActive);
-			ledSegSetPulseActiveState(segment2Down,pulseIsActive);
-			ledSegSetPulseActiveState(segment3Up,pulseIsActive);
+			ledSegSetPulse(LEDSEG_ALL,&pulse);
+			ledSegSetPulseActiveState(LEDSEG_ALL,pulseIsActive);
 		}
 
 		if(smode == SMODE_BATTERY_DISP)
@@ -357,10 +340,8 @@ void handleApplicationSimple()
 	//Generate a pulse (and switch modes for the staff)
 	if(swGetRisingEdge(2))
 	{
-		apa102SetDefaultGlobal(globalSetting*3);//)APA_MAX_GLOBAL_SETTING);
-		ledSegRestart(segment1Up,true,true);
-		ledSegRestart(segment2Down,true,true);
-		ledSegRestart(segment3Up,true,true);
+		apa102SetDefaultGlobal(globalSetting*3);
+		ledSegRestart(LEDSEG_ALL,true,true);
 	}
 	if(swGetFallingEdge(2))
 	{
@@ -379,17 +360,11 @@ void handleApplicationSimple()
 			if(systemTime>nextDiscoUpdate)
 			{
 				nextDiscoUpdate=systemTime+FADE_FAST_TIME;
-				loadLedSegFadeColour(DISCO_COL_RANDOM,&fade);
-				loadLedSegPulseColour(DISCO_COL_RANDOM,&pulse);
-				ledSegSetFade(segment1Up,&fade);
-				ledSegSetFade(segment2Down,&fade);
-				ledSegSetFade(segment3Up,&fade);
-				ledSegSetPulse(segment1Up,&pulse);
-				ledSegSetPulse(segment2Down,&pulse);
-				ledSegSetPulse(segment3Up,&pulse);
-				ledSegSetPulseActiveState(segment1Up,pulseIsActive);
-				ledSegSetPulseActiveState(segment2Down,pulseIsActive);
-				ledSegSetPulseActiveState(segment3Up,pulseIsActive);
+				animLoadLedSegFadeColour(SIMPLE_COL_RANDOM,&fade,100,200);
+				animLoadLedSegPulseColour(SIMPLE_COL_RANDOM,&pulse,200);
+				ledSegSetFade(LEDSEG_ALL,&fade);
+				ledSegSetPulse(LEDSEG_ALL,&pulse);
+				ledSegSetPulseActiveState(LEDSEG_ALL,pulseIsActive);
 			}
 			break;
 		}
@@ -481,102 +456,6 @@ static void dummyLedTask()
 			state=0;
 		}
 	}
-}
-
-/*
- * Sets up a mode where you switch from one mode to another (soft fade between the two fade colours)
- */
-void loadModeChange(discoCols_t col, ledSegmentFadeSetting_t* st, uint8_t segment)
-{
-	//Load the setting as normal (will give us the max setting, as fade by default starts from max)
-	loadLedSegFadeColour(col,st);
-
-	//Get the colour of the current state to know what to move from
-	ledSegment_t currentSeg;
-	ledSegGetState(segment,&currentSeg);
-	st->r_min = currentSeg.state.r;
-	st->g_min = currentSeg.state.g;
-	st->b_min = currentSeg.state.b;
-	st->cycles=1;
-	st->startDir=1;
-}
-
-#define MAX_DIVISOR	4
-#define MIN_MAX_DIVISOR	3
-
-/*
- * Load new colours for a given ledFadeSegment
- * Todo: Make sure this doesn't fuck up the fade timing (which it does now)
- */
-void loadLedSegFadeColour(discoCols_t col,ledSegmentFadeSetting_t* st)
-{
-	led_fade_setting_t tmpSet;
-	if(col==DISCO_COL_RANDOM)
-	{
-		tmpSet=setting_disco[(utilRandRange(DISCO_NOF_COLORS-1))];
-	}
-	else if(col==DISCO_COL_OFF)
-	{
-		tmpSet.r_min=0;
-		tmpSet.g_min=0;
-		tmpSet.b_min=0;
-		tmpSet.r_max=0;
-		tmpSet.g_max=0;
-		tmpSet.b_max=0;
-	}
-	else if(col<DISCO_COL_RANDOM)
-	{
-		tmpSet = setting_disco[col];
-	}
-	st->r_max = tmpSet.r_max/MAX_DIVISOR;
-	st->r_min = st->r_max/MIN_MAX_DIVISOR;
-	st->g_max = tmpSet.g_max/MAX_DIVISOR;
-	st->g_min = st->g_max/MIN_MAX_DIVISOR;
-	st->b_max = tmpSet.b_max/MAX_DIVISOR;
-	st->b_min = st->b_max/MIN_MAX_DIVISOR;
-}
-
-/*
- * Sets up a fade from one colour to another one
- */
-void loadLedSegFadeBetweenColours(discoCols_t colFrom, discoCols_t colTo, ledSegmentFadeSetting_t* st)
-{
-	ledSegmentFadeSetting_t settingFrom;
-	ledSegmentFadeSetting_t settingTo;
-	//Fetch colours into two settings (it's probably easier to do it like this)
-	loadLedSegFadeColour(colFrom,&settingFrom);
-	loadLedSegFadeColour(colTo,&settingTo);
-	st->r_min = settingFrom.r_max;
-	st->r_max = settingTo.r_max;
-	st->g_min = settingFrom.g_max;
-	st->g_max = settingTo.g_max;
-	st->b_min = settingFrom.b_max;
-	st->b_max = settingTo.b_max;
-}
-
-/*
- * Load new colours for a given ledFadeSegment
- */
-void loadLedSegPulseColour(discoCols_t col,ledSegmentPulseSetting_t* st)
-{
-	led_fade_setting_t tmpSet;	//Yes, it's correct using a fade setting
-	if(col==DISCO_COL_RANDOM)
-	{
-		tmpSet=setting_disco[(utilRandRange(DISCO_NOF_COLORS-1))];
-	}
-	else if(col==DISCO_COL_OFF)
-	{
-		tmpSet.r_max=0;
-		tmpSet.g_max=0;
-		tmpSet.b_max=0;
-	}
-	else if(col<DISCO_COL_RANDOM)
-	{
-		tmpSet = setting_disco[col];
-	}
-	st->r_max = tmpSet.r_max/4;
-	st->g_max = tmpSet.g_max/4;
-	st->b_max = tmpSet.b_max/4;
 }
 
 #define MODE_HANDLER_CALL_PERIOD	25
@@ -714,7 +593,7 @@ void handleModes()
 		case GMODE_SETUP_FADE:
 		{
 			fadeColour=utilIncAndWrapTo0(fadeColour,DISCO_NOF_COLORS);
-			loadLedSegFadeColour(fadeColour,fdSet);
+			animLoadLedSegFadeColour(fadeColour,fdSet,50,200);
 			break;
 		}
 		case GMODE_SETUP_PULSE:
@@ -727,7 +606,7 @@ void handleModes()
 			else
 			{
 				ledSegSetPulseActiveState(segmentTail,true);	//OK to do every time, since whatever checks it doesn't care about state changes
-				loadLedSegPulseColour(pulseColour,puSet);
+				animLoadLedSegPulseColour(pulseColour,puSet,200);
 			}
 			break;
 		}
