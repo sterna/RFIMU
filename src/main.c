@@ -94,7 +94,7 @@ void generateColor(led_fade_setting_t* s);
 void loadLedSegFadeColour(discoCols_t col,ledSegmentFadeSetting_t* st);
 void loadLedSegPulseColour(discoCols_t col,ledSegmentPulseSetting_t* st);
 static void dummyLedTask();
-void displayBattery(uint8_t channel, uint8_t segment, uint16_t startLED);
+void displayBattery(uint8_t segment, uint16_t startLED);
 void handleApplicationSimple();
 
 #define GLOBAL_SETTING	3
@@ -340,7 +340,7 @@ void handleApplicationSimple()
 			//Set LEDs in the correct place to the right colours, corresponding to battery level
 			ledSegSetPulseActiveState(segment1Up,false);
 			ledSegSetFadeActiveState(segment1Up,false);
-			displayBattery(1,segment1Up,batteryIndicatorStartLed);
+			displayBattery(segment1Up,batteryIndicatorStartLed);
 		}
 	}	//End of change mode clause
 
@@ -410,10 +410,10 @@ const uint16_t batteryLevels[NOF_BATTERY_LEVELS] ={3300,3500,3700,3900,4100};
 /*
  * Displays the battery state on a given segment with a given start LED (takes a total of 5 LEDs)
  */
-void displayBattery(uint8_t channel, uint8_t segment, uint16_t startLED)
+void displayBattery(uint8_t segment, uint16_t startLED)
 {
 	volatile uint16_t voltage=0;
-	voltage=adcGetBatVolt(channel);
+	voltage=adcGetBatVolt();
 	for(uint8_t i=0;i<NOF_BATTERY_LEVELS;i++)
 	{
 		if(voltage>batteryLevels[i])

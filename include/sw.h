@@ -54,6 +54,8 @@
 //The interval at which the debounce function is run (in ms)
 #define SW_DEBOUNCE_PERIOD 33
 #define SW_DEBOUNCE_COUNTER_TOP 3
+//The threshold (in mV) to use for
+#define SW_IR_THRESHOLD
 
 void swInit();
 void swDebounceTask();

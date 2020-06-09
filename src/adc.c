@@ -71,6 +71,8 @@ void adcInit()
 	//ADC_TempSensorVrefintCmd(ENABLE);
 	// ADC1 regular channels configuration
 	ADC_RegularChannelConfig(ADC1, BAT1_ADC_CHAN, BAT1_INDEX_NUM+1, ADC_SampleTime_239Cycles5);
+	ADC_RegularChannelConfig(ADC1, IR1_ADC_CHAN, IR1_INDEX_NUM+1, ADC_SampleTime_239Cycles5);
+	ADC_RegularChannelConfig(ADC1, IR2_ADC_CHAN, IR2_INDEX_NUM+1, ADC_SampleTime_239Cycles5);
 
 	// Configure and enable ADC interrupt
 	NVIC_InitStructure.NVIC_IRQChannel 						= ADC1_2_IRQn;
@@ -127,10 +129,19 @@ void ADC1_2_IRQHandler()
 }
 
 /*
- * Returns the voltage of the batteri in mV
+ * Returns the voltage of the battery in mV
  */
-uint16_t adcGetBatVolt(uint8_t channel)
+uint16_t adcGetBatVolt()
 {
-	uint32_t millivolt=adcRawBuffer[BAT1_INDEX_NUM+channel-1]*MILLIVOLT_PER_BIT;
+	uint32_t millivolt=adcRawBuffer[BAT1_INDEX_NUM]*MILLIVOLT_PER_BIT;
 	return (uint16_t)((millivolt*BAT_VOLT_DIV_RATIO_INV);
+}
+
+/*
+ * Returns the voltage read from given IR sensor in mV. Max is 3300.
+ */
+uint16_t adcGetIRSens(uint8_t ch)
+{
+	uint32_t millivolt=adcRawBuffer[IR1_INDEX_NUM+ch-1]*MILLIVOLT_PER_BIT;
+	return (uint16_t)millivolt;
 }

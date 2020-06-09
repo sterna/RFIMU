@@ -9,6 +9,7 @@
 #include "time.h"
 #include "utils.h"
 #include "events.h"
+#include "adc.h"
 
 static bool getSwRaw(uint8_t sw);
 
@@ -45,7 +46,7 @@ void swInit()
 	GPIOInitStruct.GPIO_Pin =  (1<<SW8_PIN);
 	GPIO_Init(SW8_PORT,&GPIOInitStruct);*/
 
-	utilSetClockGPIO(SW1_PORT,ENABLE);
+	/*utilSetClockGPIO(SW1_PORT,ENABLE);
 	utilSetClockGPIO(SW2_PORT,ENABLE);
 
 	GPIOInitStruct.GPIO_Mode = GPIO_Mode_IPU;
@@ -53,7 +54,10 @@ void swInit()
 	GPIOInitStruct.GPIO_Pin =  (1<<SW1_PIN);
 	GPIO_Init(SW1_PORT,&GPIOInitStruct);
 	GPIOInitStruct.GPIO_Pin =  (1<<SW2_PIN);
-	GPIO_Init(SW2_PORT,&GPIOInitStruct);
+	GPIO_Init(SW2_PORT,&GPIOInitStruct);*/
+
+	//All hardware is handled in ADC setup
+
 	for(uint8_t i=0;i<SW_NOF_SWITCHES;i++)
 	{
 		switches[i].threshold=SW_DEBOUNCE_COUNTER_TOP;
@@ -133,13 +137,25 @@ bool swGetActiveForMoreThan(uint8_t sw, uint32_t ms)
 	}
 }
 
+volatile uint16_t irThreshold=2700;
+
 /*
  * Returns the raw value of a switch
  * If switch does not exist, it returns false
  */
 static bool getSwRaw(uint8_t sw)
 {
-	sw++; //I'm so fucking weird and stupid :/
+	uint16_t irVal=adcGetIRSens(sw+1);
+	if(irVal<irThreshold)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+
+	sw++; //The sw variable is indexed from 0, for code simplicity reasons.
 	switch(sw)
 	{
 	case 1:
