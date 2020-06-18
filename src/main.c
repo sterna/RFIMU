@@ -85,6 +85,7 @@ typedef enum
 	SMODE_RED_FADE_NO_PULSE,
 	SMODE_RANDOM,
 	SMODE_DISCO,
+	SMODE_PRIDE_WHEEL,
 	SMODE_BATTERY_DISP,
 	SMODE_OFF,
 	SMODE_NOF_MODES
@@ -281,8 +282,16 @@ void handleApplicationSimple()
 				animLoadLedSegFadeColour(SIMPLE_COL_RANDOM,&fade,100,200);
 				animLoadLedSegPulseColour(SIMPLE_COL_RANDOM,&pulse,200);
 				break;
+			case SMODE_PRIDE_WHEEL:
+				fade.fadeTime=FADE_NORMAL_TIME;
+				animSetPrideWheel(&fade,LEDSEG_ALL);
+				pulseIsActive=false;
+				fadeAlreadySet=true;
+				break;
 			case SMODE_BATTERY_DISP:
 			{
+				//Turn of pride-wheel
+				animSetPrideWheelState(false);
 				//Do nothing here
 				break;
 			}
@@ -645,7 +654,7 @@ void generateColor(led_fade_setting_t* s)
 }
 
 static volatile bool mutex=false;
-#define OS_NOF_TASKS 5
+#define OS_NOF_TASKS 6
 /*
  * Semi-OS, used for tasks that are not extremely time critical and might take a while to perform
  */
@@ -673,6 +682,9 @@ bool poorMansOS()
 		break;
 		case 4:
 			mpu6050Task();
+		break;
+		case 5:
+			animTask();
 		break;
 	}
 	task++;
