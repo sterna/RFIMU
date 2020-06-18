@@ -137,7 +137,8 @@ bool swGetActiveForMoreThan(uint8_t sw, uint32_t ms)
 	}
 }
 
-volatile uint16_t irThreshold=2700;
+//Threshold value for IR sensors. Lower -> less sensitive
+volatile uint16_t irThreshold=2400;
 
 /*
  * Returns the raw value of a switch

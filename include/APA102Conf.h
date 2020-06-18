@@ -27,9 +27,9 @@
 //The max value for the colour scaling settings
 #define APA_SCALE_MAX			128
 //THe maximum number of strip scaling used
-#define APA_SCALE_MAX_SEGMENTS	3
+#define APA_SCALE_MAX_SEGMENTS	1
 //Enables/desiables sacling
-//#define APA_ENABLE_SCALING
+#define APA_ENABLE_SCALING
 
 //Hardware conf
 //Hardware settings for strip 1
@@ -53,12 +53,12 @@
 //Start stop for the first scale in this strip
 //Note: Any LEDs not within any scale range will not be scaled
 //Settings for scaling strip1,segment1
-#define APA_SCALE1_START	5
-#define APA_SCALE1_STOP		30
+#define APA_SCALE1_START	0
+#define APA_SCALE1_STOP		140
 //Scale factors for colours. Value is 0 to 128	(to optimize scaling performance)
 #define APA_SCALE1_R		128
-#define APA_SCALE1_G		30
-#define APA_SCALE1_B		128
+#define APA_SCALE1_G		90
+#define APA_SCALE1_B		70
 #define APA_SCALE1			{APA_SCALE1_START,APA_SCALE1_STOP,APA_SCALE1_R,APA_SCALE1_G,APA_SCALE1_B}
 
 //Settings for scaling strip1,segment2
@@ -79,7 +79,8 @@
 #define APA_SCALE3_B		30
 #define APA_SCALE3			{APA_SCALE3_START,APA_SCALE3_STOP,APA_SCALE3_R,APA_SCALE3_G,APA_SCALE3_B}
 
-#define APA_SCALE			{APA_SCALE1,APA_SCALE2,APA_SCALE3}
+//#define APA_SCALE			{APA_SCALE1,APA_SCALE2,APA_SCALE3}
+#define APA_SCALE			{APA_SCALE1}
 
 
 

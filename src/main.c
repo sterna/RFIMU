@@ -30,41 +30,6 @@ void poorMansOSRunAll();
 #pragma GCC diagnostic ignored "-Wmissing-declarations"
 #pragma GCC diagnostic ignored "-Wreturn-type"
 
-typedef enum
-{
-	GMODE_SETUP_FADE=0,	//Just a fade on the LEDs, same colour on all of them
-	GMODE_SETUP_PULSE,	//Pulses and fades
-	GMODE_PAUSE,		//Stops all LEDs as they are
-	GMODE_NOF_MODES
-}gaurianMode_t;
-
-typedef enum
-{
-	DISCO_COL_PURPLE=0,
-	DISCO_COL_CYAN,
-	DISCO_COL_YELLOW,
-	DISCO_COL_WHITE,
-	DISCO_COL_RED,
-	DISCO_COL_GREEN,
-	DISCO_COL_BLUE,
-	DISCO_COL_RANDOM,
-	DISCO_COL_OFF,
-	DISCO_COL_NOF_COLOURS
-}discoCols_t;
-
-#define DISCO_NOF_COLORS	(DISCO_COL_NOF_COLOURS-2)
-
-
-led_fade_setting_t setting_disco[DISCO_NOF_COLORS]=
-{
-{0,500,0,0,0,500},		//Purple
-{0,0,0,500,0,500},		//Cyan
-{0,600,0,400,0,0},		//"Yellow"	(Trimmed, a little, since it was very greenish)
-{0,500,0,500,0,500},	//White
-{0,500,0,0,0,0},		//Red
-{0,0,0,500,0,0},		//Green
-{0,0,0,0,0,500}			//Blue
-};
 
 /*
  * Simple interface:
@@ -91,14 +56,11 @@ typedef enum
 	SMODE_NOF_MODES
 }simpleModes_t;
 
-void generateColor(led_fade_setting_t* s);
-void loadLedSegFadeColour(discoCols_t col,ledSegmentFadeSetting_t* st);
-void loadLedSegPulseColour(discoCols_t col,ledSegmentPulseSetting_t* st);
 static void dummyLedTask();
 void displayBattery(uint8_t segment, uint16_t startLED);
 void handleApplicationSimple();
 
-#define GLOBAL_SETTING	3
+#define GLOBAL_SETTING	4
 #define UGLY_MODE_CHANGE_TIME	10000
 
 #define PULSE_FAST_PIXEL_TIME	1
@@ -115,7 +77,7 @@ uint8_t segment1Up=0;	//45 LEDs
 uint8_t segment2Down=0;	//44 LEDs
 uint8_t segment3Up=0;	//44 LEDs
 
-volatile uint16_t batteryIndicatorStartLed=40;	//There are 156 and 157 LEDs on each side
+volatile uint16_t batteryIndicatorStartLed=39;	//
 
 int main(int argc, char* argv[])
 {
@@ -187,19 +149,18 @@ void handleApplicationSimple()
 		pulse.startLed = 1;
 
 		animLoadLedSegFadeColour(SIMPLE_COL_BLUE,&fade,50,200);
-		//loadLedSegFadeColour(DISCO_COL_BLUE,&fade);
 		fade.cycles =0;
 		fade.mode = LEDSEG_MODE_BOUNCE;
 		fade.startDir = -1;
 		fade.fadeTime = 1500;
 		fade.syncGroup=1;
-		apa102SetDefaultGlobal(4);
-		segment1Up=ledSegInitSegment(1,2,15,false, &pulse,&fade);	//Skip the first LED to sync up the pulses
-		segment2Down=ledSegInitSegment(1,16,30,true,&pulse,&fade);
-		segment3Up=ledSegInitSegment(1,31,133,false, &pulse,&fade);
-		//segment1Up=ledSegInitSegment(1,2,45,false, &pulse,&fade);	//Skip the first LED to sync up the pulses
-		//segment2Down=ledSegInitSegment(1,46,89,true,&pulse,&fade);
-		//segment3Up=ledSegInitSegment(1,90,133,false, &pulse,&fade);
+		apa102SetDefaultGlobal(GLOBAL_SETTING);
+		//segment1Up=ledSegInitSegment(1,2,15,false, &pulse,&fade);	//Skip the first LED to sync up the pulses
+		//segment2Down=ledSegInitSegment(1,16,30,true,&pulse,&fade);
+		//segment3Up=ledSegInitSegment(1,31,133,false, &pulse,&fade);
+		segment1Up=ledSegInitSegment(1,2,45,false, &pulse,&fade);	//Skip the first LED to sync up the pulses
+		segment2Down=ledSegInitSegment(1,46,89,true,&pulse,&fade);
+		segment3Up=ledSegInitSegment(1,90,133,false, &pulse,&fade);
 		//pulse.startDir=-1;
 		//pulse.startLed = 100;
 		setupDone=true;
@@ -325,7 +286,6 @@ void handleApplicationSimple()
 			ledSegSetPulse(LEDSEG_ALL,&pulse);
 			ledSegSetPulseActiveState(LEDSEG_ALL,pulseIsActive);
 		}
-
 		if(smode == SMODE_BATTERY_DISP)
 		{
 			//Pause The other segment (possible arm)
@@ -465,192 +425,6 @@ static void dummyLedTask()
 			state=0;
 		}
 	}
-}
-
-#define MODE_HANDLER_CALL_PERIOD	25
-
-//Some switches might have more than one function depending on mode
-#define SW_MODE			1
-#define SW_COL_UP		2
-#define SW_PAUSE		2
-#define SW_SETUP_SYNC 	3
-#define SW_ONOFF		4
-/*
- * The "main" loop of the program. Will read the buttons and change modes accordingly
- * Called from poorManOS
- *
- * General idea for control modes:
- * Modes:
- * 		Set fade colour
- * 			SW1, beat synchronizer, if active. Otherwise, cycle mode.
- * 			SW2, colour fade up (we have a random colour, an off colour, and it will loop)
- * 			SW3, beat synch start/stop.
- * 			SW4, toggle fade on/off
- * 		Set pulse colour
- * 			SW1, beat synchronizer, if active. Otherwise, cycle mode.
- * 			SW2, colour fade up (we have a random colour, an off colour, and it will loop)
- * 			SW3, beat synch start/stop.
- * 			SW4, toggle pulse on/off
- * 		Pause
- * 			SW1, Cycle mode
- * 			SW2, freeze/unfreeze colour
- *
- *	Colours are fetched from the disco_led_fade struct (use max as is, divided by 4. Use min as new max divided by 3)
- *	If colour is set to DISCO_NOF_COLOURS, a random colour will be used
- */
-void handleModes()
-{
-	static uint32_t nextCallTime=0;
-
-	//Since the setting cannot remember the "simple colours" (or it's hard to extract them), we keep track of them here
-	static discoCols_t fadeColour=0;
-	static discoCols_t pulseColour=0;
-
-	static uint32_t tmpSynchPeriod=1000;
-	static uint32_t synchPeriodLastTime=0;
-	static bool synchMode=false;
-	static gaurianMode_t mode=GMODE_SETUP_FADE;
-	static bool isPaused=false;
-
-	if(systemTime<nextCallTime)
-	{
-		return;
-	}
-	nextCallTime=systemTime+MODE_HANDLER_CALL_PERIOD;
-
-	//Temp variables used to contain various settings
-	ledSegmentFadeSetting_t* fdSet;
-	ledSegmentPulseSetting_t* puSet;
-	ledSegment_t fullSeg;
-	ledSegGetState(segmentTail,&fullSeg);
-	fdSet=&(fullSeg.state.confFade);
-	puSet=&(fullSeg.state.confPulse);
-	//Check if we should change mode
-	if(synchMode == false && swGetFallingEdge(SW_MODE))
-	{
-		mode++;
-		if(mode>=GMODE_NOF_MODES)
-		{
-			mode=0;	//Because 0 will always be the first mode
-		}
-	}
-
-	//Start of sync mode handling
-	if(swGetFallingEdge(SW_SETUP_SYNC))
-	{
-		//Handle synch mode
-		if(synchMode)
-		{
-			synchMode=false;
-		}
-		else
-		{
-			//Start synch mode
-			synchMode=true;
-			tmpSynchPeriod=0;
-			synchPeriodLastTime=0;
-		}
-	}
-	if(synchMode && swGetRisingEdge(SW_MODE))
-	{
-		//New beat setup
-		if(synchPeriodLastTime)
-		{
-			if(tmpSynchPeriod==0)
-			{
-				tmpSynchPeriod=systemTime-synchPeriodLastTime;
-			}
-			else
-			{
-				tmpSynchPeriod=(tmpSynchPeriod+(systemTime-synchPeriodLastTime))/2;
-			}
-		}
-		synchPeriodLastTime=systemTime;
-	}
-	//Write colours during sync mode
-	if(synchMode && tmpSynchPeriod)
-	{
-		switch(mode)
-		{
-		case GMODE_SETUP_FADE:
-		{
-			fdSet->fadeTime = tmpSynchPeriod;
-			ledSegSetFade(segmentTail,fdSet);
-			break;
-		}
-		case GMODE_SETUP_PULSE:
-		{
-			//Todo: find out what good analogy shall be used for pulse with beat detection
-			fdSet->fadeTime = tmpSynchPeriod;
-			ledSegSetFade(segmentTail,fdSet);
-			break;
-		}
-		}
-		//End synch mode?
-		if(swGetFallingEdge(SW_SETUP_SYNC))
-		{
-			synchMode=false;
-		}
-	}
-	//End of synch mode handling
-
-	//Change colour
-	if(swGetFallingEdge(SW_COL_UP))
-	{
-		switch(mode)
-		{
-		case GMODE_SETUP_FADE:
-		{
-			fadeColour=utilIncAndWrapTo0(fadeColour,DISCO_NOF_COLORS);
-			animLoadLedSegFadeColour(fadeColour,fdSet,50,200);
-			break;
-		}
-		case GMODE_SETUP_PULSE:
-		{
-			pulseColour=utilIncAndWrapTo0(pulseColour,DISCO_NOF_COLORS);
-			if(pulseColour==DISCO_COL_OFF)
-			{
-				ledSegSetPulseActiveState(segmentTail,false);
-			}
-			else
-			{
-				ledSegSetPulseActiveState(segmentTail,true);	//OK to do every time, since whatever checks it doesn't care about state changes
-				animLoadLedSegPulseColour(pulseColour,puSet,200);
-			}
-			break;
-		}
-		}
-	}
-
-	//Pause handling (will just freeze the segments)
-	if(mode==GMODE_PAUSE && swGetFallingEdge(SW_PAUSE))
-	{
-		if(isPaused)
-		{
-			//Start fade and pulse
-			ledSegSetFadeActiveState(segmentTail,true);
-			ledSegSetPulseActiveState(segmentTail,true);
-			isPaused=false;
-		}
-		else
-		{
-			//Stop fade and pulse
-			ledSegSetFadeActiveState(segmentTail,false);
-			ledSegSetPulseActiveState(segmentTail,false);
-			isPaused=true;
-		}
-	}
-}
-
-/*
- * Generate a random color (most likely it looks white...)
- */
-#define COLOR_MAX 500
-void generateColor(led_fade_setting_t* s)
-{
-	s->r_max = utilRandRange(COLOR_MAX);
-	s->g_max = utilRandRange(COLOR_MAX);
-	s->b_max = utilRandRange(COLOR_MAX);
 }
 
 static volatile bool mutex=false;
