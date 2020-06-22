@@ -48,6 +48,7 @@ typedef enum
 	SMODE_CYAN_FADE_NO_PULSE,
 	SMODE_YLW_FADE_NO_PULSE,
 	SMODE_RED_FADE_NO_PULSE,
+	SMODE_WHITE_FADE_PRIDE_PULSE,
 	SMODE_RANDOM,
 	SMODE_DISCO,
 	SMODE_PRIDE_WHEEL,
@@ -60,8 +61,8 @@ static void dummyLedTask();
 void displayBattery(uint8_t segment, uint16_t startLED);
 void handleApplicationSimple();
 
-#define GLOBAL_SETTING	4
-#define UGLY_MODE_CHANGE_TIME	10000
+#define GLOBAL_SETTING	5
+#define GLITTER_TO_PULSE_CHANGE_TIME	5000
 
 #define PULSE_FAST_PIXEL_TIME	1
 #define PULSE_NORMAL_PIXEL_TIME	1
@@ -121,10 +122,10 @@ void handleApplicationSimple()
 	static simpleModes_t smode=SMODE_RED_FADE_NO_PULSE;
 	static bool isActive=true;
 	static bool pulseIsActive=true;
-	static bool uglyModeChange=false;
-	static uint32_t uglyModeChangeActivateTime=0;
 	static uint32_t nextDiscoUpdate=0;
 	static uint8_t globalSetting=GLOBAL_SETTING;
+	static isPulseMode=false;
+
 	if(!setupDone)
 	{
 		animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,200);
@@ -141,7 +142,7 @@ void handleApplicationSimple()
 		pulse.cycles =0;
 		pulse.ledsFadeAfter = 5;
 		pulse.ledsFadeBefore = 5;
-		pulse.ledsMaxPower = 25;
+		pulse.ledsMaxPower = 30;
 		pulse.mode = LEDSEG_MODE_GLITTER_BOUNCE;
 		pulse.pixelTime = 1000;
 		pulse.pixelsPerIteration = 5;
@@ -158,28 +159,47 @@ void handleApplicationSimple()
 		//segment1Up=ledSegInitSegment(1,2,15,false, &pulse,&fade);	//Skip the first LED to sync up the pulses
 		//segment2Down=ledSegInitSegment(1,16,30,true,&pulse,&fade);
 		//segment3Up=ledSegInitSegment(1,31,133,false, &pulse,&fade);
-		segment1Up=ledSegInitSegment(1,2,45,false, &pulse,&fade);	//Skip the first LED to sync up the pulses
-		segment2Down=ledSegInitSegment(1,46,89,true,&pulse,&fade);
-		segment3Up=ledSegInitSegment(1,90,133,false, &pulse,&fade);
+		segment1Up=ledSegInitSegment(1,2,45,false,false,&pulse,&fade);	//Skip the first LED to sync up the pulses
+		segment2Down=ledSegInitSegment(1,46,89,true,false,&pulse,&fade);
+		segment3Up=ledSegInitSegment(1,90,133,false,false,&pulse,&fade);
 		//pulse.startDir=-1;
 		//pulse.startLed = 100;
 		setupDone=true;
 	}
 
 	//Change mode
-	if(swGetFallingEdge(1) || uglyModeChange)
+	if(swGetFallingEdge(1))
 	{
 		bool fadeAlreadySet=false;
 		bool pulseAlreadySet=false;
 		pulseIsActive=true;
-		uglyModeChange=false;
 		//Handles if something needs to be done when changing from a state
 		switch(smode)
 		{
 			case SMODE_DISCO:
 			{
-				pulse.pixelTime=1000;//PULSE_NORMAL_PIXEL_TIME;
+				if(isPulseMode)
+				{
+					pulse.pixelTime=PULSE_NORMAL_PIXEL_TIME;
+				}
+				else
+				{
+					pulse.pixelTime=1000;//PULSE_NORMAL_PIXEL_TIME;
+				}
 				fade.fadeTime=FADE_NORMAL_TIME;
+				break;
+			}
+			case SMODE_PRIDE_WHEEL:
+			{
+				//Turn of pride-wheel
+				animSetPrideWheelState(false);
+				break;
+			}
+			case SMODE_WHITE_FADE_PRIDE_PULSE:
+			{
+				pulse.rainbowColour=false;
+				pulse.ledsMaxPower=30;
+				pulse.pixelsPerIteration=5;
 				break;
 			}
 			default:
@@ -196,12 +216,13 @@ void handleApplicationSimple()
 		{
 			case SMODE_BLUE_FADE_YLW_PULSE:
 				animLoadLedSegFadeColour(SIMPLE_COL_BLUE,&fade,25,200);
-				animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,150);
+				animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,200);
 				break;
 			case SMODE_CYAN_FADE_YLW_PULSE:
-				animSetModeChange(SIMPLE_COL_GREEN,&fade,LEDSEG_ALL,true,50,150);
+				animSetModeChange(SIMPLE_COL_GREEN,&fade,LEDSEG_ALL,true,50,200);
 				fadeAlreadySet=true;
 				pulseIsActive=false;
+				animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,200);
 				break;
 			case SMODE_RED_FADE_YLW_PULSE:
 				animLoadLedSegFadeBetweenColours(SIMPLE_COL_RED,SIMPLE_COL_BLUE,&fade,150,150);
@@ -211,24 +232,24 @@ void handleApplicationSimple()
 				//animLoadLedSegPulseColour(SIMPLE_COL_YELLOW,&pulse,150);
 				break;
 			case SMODE_YLW_FADE_PURPLE_PULSE:
-				animLoadLedSegFadeBetweenColours(SIMPLE_COL_CYAN,SIMPLE_COL_YELLOW,&fade,100,100);
+				animLoadLedSegFadeBetweenColours(SIMPLE_COL_CYAN,SIMPLE_COL_YELLOW,&fade,150,150);
 				animSetModeChange(SIMPLE_COL_NO_CHANGE,&fade,LEDSEG_ALL,true,0,0);
 				//animLoadLedSegPulseColour(SIMPLE_COL_PURPLE,&pulse,150);
 				fadeAlreadySet=true;
 				pulseIsActive=false;
 				break;
 			case SMODE_YLW_FADE_GREEN_PULSE:
-				animSetModeChange(SIMPLE_COL_RED,&fade,LEDSEG_ALL,true,25,150);
+				animSetModeChange(SIMPLE_COL_RED,&fade,LEDSEG_ALL,true,25,200);
 				fadeAlreadySet=true;
 				pulseIsActive=false;
 				break;
 			case SMODE_CYAN_FADE_NO_PULSE:
-				animSetModeChange(SIMPLE_COL_CYAN,&fade,LEDSEG_ALL,false,50,150);
+				animSetModeChange(SIMPLE_COL_CYAN,&fade,LEDSEG_ALL,false,50,200);
 				fadeAlreadySet=true;
 				pulseIsActive=false;
 				break;
 			case SMODE_YLW_FADE_NO_PULSE:
-				animSetModeChange(SIMPLE_COL_YELLOW,&fade,LEDSEG_ALL,false,50,150);
+				animSetModeChange(SIMPLE_COL_YELLOW,&fade,LEDSEG_ALL,false,50,200);
 				fadeAlreadySet=true;
 				pulseIsActive=false;
 				break;
@@ -236,12 +257,28 @@ void handleApplicationSimple()
 				animLoadLedSegFadeColour(SIMPLE_COL_RED,&fade,50,150);
 				pulseIsActive=false;
 				break;
+			case SMODE_WHITE_FADE_PRIDE_PULSE:
+				animSetModeChange(SIMPLE_COL_WHITE,&fade,LEDSEG_ALL,false,50,150);
+				fadeAlreadySet=true;
+				pulseIsActive=true;
+				pulse.ledsMaxPower=40;
+				pulse.pixelsPerIteration=3;
+				pulse.rainbowColour=true;
+				break;
 			case SMODE_DISCO:
-				pulse.pixelTime=500;//PULSE_FAST_PIXEL_TIME;
+				if(pulseIsActive)
+				{
+					pulse.pixelTime=PULSE_FAST_PIXEL_TIME;
+				}
+				else
+				{
+					pulse.pixelTime=500;
+				}
 				fade.fadeTime=FADE_FAST_TIME;	//The break is omitted by design, since SMODE_DISCO does the same thing as SMODE_RANDOM
 			case SMODE_RANDOM:
 				animLoadLedSegFadeColour(SIMPLE_COL_RANDOM,&fade,100,200);
 				animLoadLedSegPulseColour(SIMPLE_COL_RANDOM,&pulse,200);
+				pulseIsActive=true;
 				break;
 			case SMODE_PRIDE_WHEEL:
 				fade.fadeTime=FADE_NORMAL_TIME;
@@ -251,8 +288,6 @@ void handleApplicationSimple()
 				break;
 			case SMODE_BATTERY_DISP:
 			{
-				//Turn of pride-wheel
-				animSetPrideWheelState(false);
 				//Do nothing here
 				break;
 			}
@@ -316,10 +351,40 @@ void handleApplicationSimple()
 	{
 		apa102SetDefaultGlobal(globalSetting);
 	}
-	if(swGetActiveForMoreThan(2,UGLY_MODE_CHANGE_TIME))
+	//Switches between pulse mode and glitter mode
+	if(swGetActiveForMoreThan(2,GLITTER_TO_PULSE_CHANGE_TIME))
 	{
-		apa102SetDefaultGlobal(globalSetting);
-		uglyModeChange=true;
+		if(isPulseMode)
+		{
+			//Switch to glitter mode
+			pulse.mode = LEDSEG_MODE_GLITTER_BOUNCE;
+			pulse.cycles =0;
+			pulse.ledsFadeAfter = 0;
+			pulse.ledsFadeBefore = 5;
+			pulse.ledsMaxPower = 150;
+			pulse.pixelTime = 2000;
+			pulse.pixelsPerIteration = 5;
+			pulse.startDir =1;
+			pulse.startLed = 1;
+			isPulseMode=false;
+		}
+		else
+		{
+			//Switch to pulse mode
+			pulse.mode=LEDSEG_MODE_LOOP_END;
+			pulse.cycles =0;
+			pulse.ledsFadeAfter = 10;
+			pulse.ledsFadeBefore = 10;
+			pulse.ledsMaxPower = 20;
+			pulse.pixelTime = PULSE_NORMAL_PIXEL_TIME;
+			pulse.pixelsPerIteration = 3;
+			pulse.startDir =1;
+			pulse.startLed = 1;
+			isPulseMode=true;
+		}
+		ledSegSetFade(LEDSEG_ALL,&fade);
+		ledSegSetPulse(LEDSEG_ALL,&pulse);
+		ledSegSetPulseActiveState(LEDSEG_ALL,pulseIsActive);
 	}
 	//Handle special modes
 	switch(smode)
